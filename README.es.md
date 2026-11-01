@@ -55,7 +55,36 @@ flowchart TB
 
 ---
 
-## 2. Alcance V1 y Mecanicas Fisicas
+## 2. Alcance V1 y Matriz de Estado de Implementacion
+
+La siguiente tabla resume el estado de implementacion de todos los subsistemas del motor fisico, la integracion con Windows, el pipeline grafico y la pasarela de comunicacion:
+
+| Categoria | Caracteristica / Mecanica | Especificacion y Detalles | Estado |
+| :--- | :--- | :--- | :--- |
+| **Fisica** | Arrastre y Pendulo Inercial (`Held`) | Anclaje relativo, resorte angular amortiguado, deformacion de melena | Completado |
+| **Fisica** | Lanzamiento Balistico (`throwHer`) | Buffer de velocidad, trayectoria parabolica, spin tumbling, estelas | Completado |
+| **Fisica** | Colisiones e Impactos | Restitucion de rebote, hit-stop anime (1-4 frames), squash & stretch | Completado |
+| **Fisica** | Particulas de Impacto (VFX) | Ondas de choque neon circulares y emision de chispas en colision | Completado |
+| **Fisica** | Aterrizaje con Derrape (`Skid`) | Desaceleracion por friccion y chispas de frenado al caer de pie | Completado |
+| **Fisica** | Noqueo K.O. (`Dazed`) | Estado noqueado por impacto violento con estrellas orbitando en 3D | Completado |
+| **Fisica** | Colgado de Techo (`Upside`) | Postura suspendida invertida al saltar contra el borde superior | Completado |
+| **Fisica** | Cabalgar el Cursor (`Ride`) | Agarre y seguimiento directo sobre el puntero del raton | Pendiente |
+| **Fisica** | Reposo en Esquinas (`Corner`) | Postura de descanso en las esquinas de la pantalla | Pendiente |
+| **Escritorio** | Escaneo de Repisas de Ventanas | Enumeracion Win32 nativa (`EnumWindows`, `DwmGetWindowAttribute`) | Completado |
+| **Escritorio** | Sustraccion Z-Order 1D | Recorte geometrico restando oclusiones de ventanas superiores | Completado |
+| **Escritorio** | Posado en Repisas (`Perch`) | Seguimiento reactivo de ventanas; caida libre ante cierre/minimizacion | Completado |
+| **Escritorio** | Topologia Multi-Monitor | Mapeo de espacio virtual de pantallas (`EnumDisplayMonitors`) | Completado |
+| **Escritorio** | Cruce de Fronteras de Pantalla | Transicion fluida entre monitores contiguos; rebote en bordes libres | Completado |
+| **Render** | Overlay DirectComposition | Ventana transparente (`WS_EX_NOREDIRECTIONBITMAP`, DX12/Vulkan) | Completado |
+| **Render** | Hit-Testing de Opacidad por Pixel | Consulta de mascara alfa en RAM (`WM_NCHITTEST` < 0.01 ms, sin GPU readback) | Completado |
+| **Render** | Atlas de Sprites y Animacion | 38 tiras de animacion con seleccion de cuadros segun postura | Completado |
+| **Render** | Shaders WGSL Avanzados | Post-procesado (grietas en pantalla, aberracion cromatica Relic) | En progreso |
+| **Pasarela** | Servidor Tokio Loopback | Servidor WebSocket asincrono en `ws://127.0.0.1:47823` | Completado |
+| **Pasarela** | Protocolo de Entrada (Serde) | Comandos `speak`, `lip_sync`, `emotion`, `point_at`, `action` | Completado |
+| **Pasarela** | Telemetria de Salida (Serde) | Eventos `avatar_grabbed`, `avatar_thrown`, `avatar_impact`, `avatar_landed`, `monitor_changed` | Completado |
+| **Pasarela** | Suite de Pruebas y Mock | Script cliente de validacion (`scripts/agent_mock.js`) y pruebas unitarias | Completado |
+
+---
 
 ### 2.1. Arrastre y Pendulo Inercial (`Held`)
 - Al hacer clic sobre Capri, se calcula el punto relativo de agarre respecto a su cuerpo.
@@ -216,6 +245,7 @@ const ws = new WebSocket('ws://127.0.0.1:47823');
 ws.on('open', () => {
     console.log('Conectado a Capri Engine!');
     
+    // Hacer que Capri hable
     ws.send(JSON.stringify({
         type: 'speak',
         text: 'Compilacion exitosa en Rust!',
@@ -237,7 +267,7 @@ ws.on('message', (data) => {
 
 ### Requisitos Previos:
 - **Sistema Operativo**: Windows 10 o Windows 11 (x64).
-- **Rust Toolchain**: Rust 1.87+ (Edicion 2024 soportada).
+- **Rust Toolchain**: Rust 1.85+ (Edicion 2024 soportada).
   ```powershell
   winget install Rustlang.Rustup
   rustup default stable-x86_64-pc-windows-msvc
