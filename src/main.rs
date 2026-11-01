@@ -22,7 +22,7 @@ use capri_engine::render::window::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.2.1 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.2.2 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<IncomingCommand>();

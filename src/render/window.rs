@@ -9,7 +9,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture, SetCapture};
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, HTCLIENT, HTTRANSPARENT,
     LWA_ALPHA, MA_NOACTIVATE, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx,
@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
     WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCHITTEST,
     WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{IUnknown, Interface, PCWSTR, w};
 
@@ -231,8 +231,12 @@ fn create_overlay_hwnd() -> Result<HWND, String> {
         let vw = vr - vx;
         let vh = vb - vy;
 
-        let ex_style =
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_NOACTIVATE;
+        let ex_style = WS_EX_TOPMOST
+            | WS_EX_TOOLWINDOW
+            | WS_EX_NOREDIRECTIONBITMAP
+            | WS_EX_NOACTIVATE
+            | WS_EX_TRANSPARENT
+            | WS_EX_LAYERED;
         let style = WS_POPUP;
 
         let hwnd = CreateWindowExW(
@@ -345,11 +349,6 @@ impl CompositionOverlay {
         }
 
         let hwnd = create_overlay_hwnd()?;
-        // SAFETY: The visual window remains visible and composed by DirectComposition,
-        // while disabling it removes it from mouse and keyboard input routing.
-        unsafe {
-            let _ = EnableWindow(hwnd, false);
-        }
         let (left, top, right, bottom) = virtual_desktop_bounds();
         let size = ((right - left) as u32, (bottom - top) as u32);
         let input = OverlayInput::new();
