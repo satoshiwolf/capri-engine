@@ -1,19 +1,35 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, HTCLIENT, HTTRANSPARENT,
-    PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    SetWindowPos, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST,
-    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::DirectComposition::{
+    DCompositionCreateDevice2, IDCompositionDesktopDevice, IDCompositionTarget, IDCompositionVisual,
 };
-use windows::core::{PCWSTR, w};
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GWL_EXSTYLE, GetCursorPos,
+    GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT, MA_NOACTIVATE,
+    MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
+    PostQuitMessage, QS_ALLINPUT, RegisterClassExW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, WINDOW_EX_STYLE, WM_DESTROY,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WNDCLASSEXW,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
+};
+use windows::core::{IUnknown, Interface, PCWSTR, w};
 
+use crate::core::state::Stance;
 use crate::desktop::monitors::virtual_desktop_bounds;
 
 pub static IS_RUNNING: AtomicBool = AtomicBool::new(true);
 
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `OverlayInput` and `CompositionOverlay`. This type will be removed in 0.3.0."
+)]
 #[derive(Clone)]
 pub struct WindowSharedState {
     pub mouse_pos: Arc<Mutex<POINT>>,
@@ -21,6 +37,7 @@ pub struct WindowSharedState {
     pub should_hit_client: Arc<Mutex<bool>>,
 }
 
+#[allow(deprecated)]
 impl WindowSharedState {
     pub fn new() -> Self {
         Self {
@@ -31,13 +48,87 @@ impl WindowSharedState {
     }
 }
 
+#[allow(deprecated)]
 impl Default for WindowSharedState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-static GLOBAL_STATE: OnceLock<WindowSharedState> = OnceLock::new();
+#[derive(Clone)]
+pub struct OverlayInput {
+    cursor_x: Arc<AtomicI32>,
+    cursor_y: Arc<AtomicI32>,
+    mouse_down: Arc<AtomicBool>,
+    capture_input: Arc<AtomicBool>,
+}
+
+impl OverlayInput {
+    pub fn new() -> Self {
+        Self {
+            cursor_x: Arc::new(AtomicI32::new(0)),
+            cursor_y: Arc::new(AtomicI32::new(0)),
+            mouse_down: Arc::new(AtomicBool::new(false)),
+            capture_input: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn cursor(&self) -> (i32, i32) {
+        (
+            self.cursor_x.load(Ordering::Relaxed),
+            self.cursor_y.load(Ordering::Relaxed),
+        )
+    }
+
+    pub fn mouse_down(&self) -> bool {
+        self.mouse_down.load(Ordering::Acquire)
+    }
+
+    pub fn set_capture_input(&self, capture: bool) {
+        self.capture_input.store(capture, Ordering::Release);
+    }
+
+    fn set_cursor(&self, point: POINT) {
+        self.cursor_x.store(point.x, Ordering::Relaxed);
+        self.cursor_y.store(point.y, Ordering::Relaxed);
+    }
+}
+
+impl Default for OverlayInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn should_capture_input(is_over_sprite: bool, mouse_down: bool, stance: Stance) -> bool {
+    is_over_sprite || mouse_down || stance == Stance::Held
+}
+
+static GLOBAL_INPUT: OnceLock<OverlayInput> = OnceLock::new();
+
+struct ComApartment;
+
+impl ComApartment {
+    fn initialize() -> Result<Self, String> {
+        // SAFETY: COM is initialized for the lifetime of the main-thread overlay and
+        // balanced by `CoUninitialize` in `Drop`.
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+                .ok()
+                .map_err(|error| format!("CoInitializeEx: {error}"))?;
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        // SAFETY: This pairs with the successful `CoInitializeEx` in `initialize`.
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
 
 unsafe extern "system" fn overlay_wndproc(
     hwnd: HWND,
@@ -47,38 +138,28 @@ unsafe extern "system" fn overlay_wndproc(
 ) -> LRESULT {
     match msg {
         WM_NCHITTEST => {
-            // Solid sprite pixels hit the overlay; transparent pixels pass clicks through.
-            if let Some(state) = GLOBAL_STATE.get() {
-                let hit = *state.should_hit_client.lock().unwrap();
-                if hit {
-                    return LRESULT(HTCLIENT as isize);
-                }
+            if GLOBAL_INPUT
+                .get()
+                .is_some_and(|input| input.capture_input.load(Ordering::Acquire))
+            {
+                return LRESULT(HTCLIENT as isize);
             }
             LRESULT(HTTRANSPARENT as isize)
         }
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_LBUTTONDOWN => {
-            if let Some(state) = GLOBAL_STATE.get() {
-                *state.is_mouse_down.lock().unwrap() = true;
+            if let Some(input) = GLOBAL_INPUT.get() {
+                input.mouse_down.store(true, Ordering::Release);
             }
             LRESULT(0)
         }
         WM_LBUTTONUP => {
-            if let Some(state) = GLOBAL_STATE.get() {
-                *state.is_mouse_down.lock().unwrap() = false;
+            if let Some(input) = GLOBAL_INPUT.get() {
+                input.mouse_down.store(false, Ordering::Release);
             }
             LRESULT(0)
         }
-        WM_MOUSEMOVE => {
-            if let Some(state) = GLOBAL_STATE.get() {
-                let mut pt = POINT::default();
-                // SAFETY: `pt` is a valid writable POINT for the duration of the call.
-                unsafe {
-                    let _ = GetCursorPos(&mut pt);
-                }
-                *state.mouse_pos.lock().unwrap() = pt;
-            }
-            LRESULT(0)
-        }
+        WM_MOUSEMOVE => LRESULT(0),
         WM_DESTROY => {
             IS_RUNNING.store(false, Ordering::SeqCst);
             // SAFETY: PostQuitMessage has no pointer preconditions.
@@ -94,11 +175,10 @@ unsafe extern "system" fn overlay_wndproc(
     }
 }
 
-pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
-    let _ = GLOBAL_STATE.set(state);
+fn create_overlay_hwnd() -> Result<HWND, String> {
     // SAFETY: The instance handle and static UTF-16 strings remain valid while
-    // RegisterClassExW and CreateWindowExW consume them. The window proc is
-    // valid for the process lifetime.
+    // `RegisterClassExW` and `CreateWindowExW` consume them. The window procedure
+    // remains valid for the process lifetime.
     unsafe {
         let hinstance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {}", e))?;
 
@@ -107,7 +187,7 @@ pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(overlay_wndproc),
-            hInstance: hinstance.into(),
+            hInstance: HINSTANCE(hinstance.0),
             lpszClassName: PCWSTR(class_name.as_ptr()),
             ..Default::default()
         };
@@ -118,7 +198,11 @@ pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
         let vw = vr - vx;
         let vh = vb - vy;
 
-        let ex_style = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP;
+        let ex_style = WS_EX_TOPMOST
+            | WS_EX_TOOLWINDOW
+            | WS_EX_NOREDIRECTIONBITMAP
+            | WS_EX_NOACTIVATE
+            | WS_EX_TRANSPARENT;
         let style = WS_POPUP;
 
         let hwnd = CreateWindowExW(
@@ -132,14 +216,14 @@ pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
             vh,
             None,
             None,
-            hinstance,
+            Some(HINSTANCE(hinstance.0)),
             None,
         )
         .map_err(|e| format!("CreateWindowExW: {}", e))?;
 
         let _ = SetWindowPos(
             hwnd,
-            HWND(-1 as _), // HWND_TOPMOST
+            Some(HWND(-1isize as *mut _)), // HWND_TOPMOST
             vx,
             vy,
             vw,
@@ -148,6 +232,161 @@ pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
         );
 
         Ok(hwnd)
+    }
+}
+
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `CompositionOverlay::create()`. This function will be removed in 0.3.0."
+)]
+#[allow(deprecated)]
+pub fn create_overlay_window(_state: WindowSharedState) -> Result<HWND, String> {
+    create_overlay_hwnd()
+}
+
+pub struct CompositionOverlay {
+    hwnd: HWND,
+    origin: (i32, i32),
+    size: (u32, u32),
+    input: OverlayInput,
+    visual: IDCompositionVisual,
+    _target: IDCompositionTarget,
+    _device: IDCompositionDesktopDevice,
+    _com: ComApartment,
+    click_through: bool,
+}
+
+impl CompositionOverlay {
+    pub fn create() -> Result<Self, String> {
+        let com = ComApartment::initialize()?;
+
+        // SAFETY: DPI awareness is process-wide and must be selected before the overlay
+        // window is created. Failure is non-fatal when awareness was already configured.
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+
+        let hwnd = create_overlay_hwnd()?;
+        let (left, top, right, bottom) = virtual_desktop_bounds();
+        let size = ((right - left) as u32, (bottom - top) as u32);
+        let input = OverlayInput::new();
+        let _ = GLOBAL_INPUT.set(input.clone());
+
+        // SAFETY: The DirectComposition device is created without an external rendering
+        // device, and the target and visual are owned for the lifetime of this overlay.
+        let (device, target, visual) = unsafe {
+            let device: IDCompositionDesktopDevice =
+                DCompositionCreateDevice2(None::<&IUnknown>)
+                    .map_err(|error| format!("DCompositionCreateDevice2: {error}"))?;
+            let target = device
+                .CreateTargetForHwnd(hwnd, true)
+                .map_err(|error| format!("CreateTargetForHwnd: {error}"))?;
+            let visual = device
+                .CreateVisual()
+                .map_err(|error| format!("CreateVisual: {error}"))?;
+            target
+                .SetRoot(&visual)
+                .map_err(|error| format!("IDCompositionTarget::SetRoot: {error}"))?;
+            device
+                .Commit()
+                .map_err(|error| format!("IDCompositionDevice::Commit: {error}"))?;
+            (device, target, visual)
+        };
+
+        let mut overlay = Self {
+            hwnd,
+            origin: (left, top),
+            size,
+            input,
+            visual: visual.into(),
+            _target: target,
+            _device: device,
+            _com: com,
+            click_through: false,
+        };
+        overlay.set_click_through(true)?;
+        Ok(overlay)
+    }
+
+    pub fn hwnd(&self) -> HWND {
+        self.hwnd
+    }
+
+    pub fn input(&self) -> &OverlayInput {
+        &self.input
+    }
+
+    pub fn origin(&self) -> (i32, i32) {
+        self.origin
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    pub fn commit(&self) -> Result<(), String> {
+        // SAFETY: The DirectComposition device is owned by this overlay and remains
+        // valid for the lifetime of all visuals attached to it.
+        unsafe {
+            self._device
+                .Commit()
+                .map_err(|error| format!("IDCompositionDevice::Commit: {error}"))
+        }
+    }
+
+    pub fn poll_cursor(&self) -> Result<(i32, i32), String> {
+        let mut point = POINT::default();
+        // SAFETY: `point` is a valid writable POINT for the duration of the call.
+        unsafe {
+            GetCursorPos(&mut point).map_err(|error| format!("GetCursorPos: {error}"))?;
+        }
+        self.input.set_cursor(point);
+        Ok((point.x, point.y))
+    }
+
+    pub fn set_click_through(&mut self, click_through: bool) -> Result<(), String> {
+        if self.click_through == click_through {
+            return Ok(());
+        }
+
+        // SAFETY: `hwnd` belongs to this overlay and remains valid for the lifetime of
+        // this object. Updating the extended style only changes mouse hit-testing.
+        unsafe {
+            let current = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) as u32;
+            let mut style = WINDOW_EX_STYLE(current);
+            if click_through {
+                style |= WS_EX_TRANSPARENT;
+            } else {
+                style &= !WS_EX_TRANSPARENT;
+            }
+            SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, style.0 as isize);
+            SetWindowPos(
+                self.hwnd,
+                Some(HWND(-1isize as *mut _)),
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            )
+            .map_err(|error| format!("SetWindowPos: {error}"))?;
+        }
+        self.click_through = click_through;
+        Ok(())
+    }
+
+    pub fn create_surface(
+        &self,
+        instance: &wgpu::Instance,
+    ) -> Result<wgpu::Surface<'static>, String> {
+        // SAFETY: The DirectComposition visual is owned by this overlay and outlives
+        // the returned surface; `wgpu` retains its own reference to the visual.
+        unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CompositionVisual(
+                self.visual.as_raw(),
+            ))
+        }
+        .map_err(|error| format!("create composition surface: {error}"))
     }
 }
 
@@ -165,4 +404,30 @@ pub fn pump_messages() -> bool {
         }
     }
     true
+}
+
+pub fn wait_for_messages(timeout_ms: u32) {
+    // SAFETY: There are no object handles to wait on, and the timeout only delays
+    // until window input arrives or the target frame time elapses.
+    unsafe {
+        let _ = MsgWaitForMultipleObjectsEx(
+            None,
+            timeout_ms,
+            QS_ALLINPUT,
+            MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS(0),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_input_follows_sprite_and_drag_state() {
+        assert!(should_capture_input(true, false, Stance::Stand));
+        assert!(should_capture_input(false, true, Stance::Stand));
+        assert!(should_capture_input(false, false, Stance::Held));
+        assert!(!should_capture_input(false, false, Stance::Fly));
+    }
 }

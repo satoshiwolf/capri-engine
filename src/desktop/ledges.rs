@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
@@ -7,6 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetWindowLongW, GetWindowRect,
     GetWindowTextW, IsIconic, IsWindow, IsWindowVisible, WS_EX_TOOLWINDOW,
 };
+use windows::core::BOOL;
 
 #[derive(Debug, Clone)]
 pub struct Ledge {
@@ -72,9 +73,11 @@ pub fn scan_ledges(skip_hwnds: &[isize]) -> Vec<Ledge> {
         // this callback synchronously while that stack borrow remains valid.
         let list = unsafe { &mut *(lparam.0 as *mut Vec<ScannedWindow>) };
 
-        if !IsWindow(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool()
+        if !IsWindow(Some(hwnd)).as_bool()
+            || !IsWindowVisible(hwnd).as_bool()
+            || IsIconic(hwnd).as_bool()
         {
-            return BOOL(1);
+            return true.into();
         }
 
         // Exclude windows on inactive virtual desktops.
@@ -86,19 +89,19 @@ pub fn scan_ledges(skip_hwnds: &[isize]) -> Vec<Ledge> {
             std::mem::size_of::<u32>() as u32,
         );
         if cloaked != 0 {
-            return BOOL(1);
+            return true.into();
         }
 
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
         if (ex_style & WS_EX_TOOLWINDOW.0) != 0 {
-            return BOOL(1);
+            return true.into();
         }
 
         let mut class_buf = [0u16; 128];
         let class_len = GetClassNameW(hwnd, &mut class_buf);
         let class_name = String::from_utf16_lossy(&class_buf[..class_len as usize]);
         if SHELL_CLASSES.contains(&class_name.as_str()) {
-            return BOOL(1);
+            return true.into();
         }
 
         let mut bounds = RECT::default();
@@ -115,7 +118,7 @@ pub fn scan_ledges(skip_hwnds: &[isize]) -> Vec<Ledge> {
         let width = bounds.right - bounds.left;
         let height = bounds.bottom - bounds.top;
         if width < 120 || height < 60 {
-            return BOOL(1);
+            return true.into();
         }
 
         let mut title_buf = [0u16; 256];
@@ -132,7 +135,7 @@ pub fn scan_ledges(skip_hwnds: &[isize]) -> Vec<Ledge> {
             is_seatable: has_caption,
         });
 
-        BOOL(1)
+        true.into()
     }
 
     // SAFETY: `scanned` remains alive for the synchronous enumeration, and Windows only

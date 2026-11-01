@@ -117,6 +117,12 @@ impl VfxSystem {
         }
     }
 
+    pub fn emit_shockwave(&mut self, center: Vec2, hard: f32) {
+        if hard >= 0.15 {
+            self.shockwaves.push(Shockwave::new(center, hard));
+        }
+    }
+
     pub fn update(&mut self, dt: f32) {
         self.sparks.retain_mut(|s| s.update(dt));
         self.shockwaves.retain_mut(|w| w.update(dt));

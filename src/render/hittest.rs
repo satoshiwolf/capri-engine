@@ -10,8 +10,8 @@ pub struct AlphaBitmask {
 }
 
 impl AlphaBitmask {
-    pub fn new(width: u32, height: u32, alpha_data: Vec<u8>) -> Self {
-        assert_eq!((width * height) as usize, alpha_data.len());
+    pub fn new(width: u32, height: u32, mut alpha_data: Vec<u8>) -> Self {
+        alpha_data.resize(width as usize * height as usize, 0);
         Self {
             width,
             height,
@@ -29,7 +29,7 @@ impl AlphaBitmask {
             return false;
         }
         let idx = (local_y as usize) * (self.width as usize) + (local_x as usize);
-        self.alpha_data[idx] > 10
+        self.alpha_data.get(idx).is_some_and(|alpha| *alpha > 10)
     }
 
     /// Tests a screen-space point against the sprite transform without a GPU readback.
@@ -67,4 +67,17 @@ pub fn create_default_mask() -> AlphaBitmask {
     }
 
     AlphaBitmask::new(w, h, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_mask_data_is_padded_without_panicking() {
+        let mask = AlphaBitmask::new(2, 2, vec![255]);
+        assert!(mask.is_solid(0, 0));
+        assert!(!mask.is_solid(1, 1));
+        assert!(!mask.is_solid(10, 10));
+    }
 }

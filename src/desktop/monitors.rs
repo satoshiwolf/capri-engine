@@ -1,11 +1,12 @@
 use glam::Vec2;
-use windows::Win32::Foundation::{BOOL, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
+use windows::core::BOOL;
 
 #[derive(Debug, Clone)]
 pub struct MonitorInfo {
@@ -61,7 +62,7 @@ pub fn enumerate_monitors() -> Vec<MonitorInfo> {
                 });
             }
         }
-        BOOL(1)
+        true.into()
     }
 
     // SAFETY: `list` is a valid mutable local passed through LPARAM to the synchronous

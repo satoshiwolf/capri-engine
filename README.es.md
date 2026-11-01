@@ -237,7 +237,7 @@ ws.on('message', (data) => {
 
 ### Requisitos Previos:
 - **Sistema Operativo**: Windows 10 o Windows 11 (x64).
-- **Rust Toolchain**: Rust 1.85+ (Edicion 2024 soportada).
+- **Rust Toolchain**: Rust 1.87+ (Edicion 2024 soportada).
   ```powershell
   winget install Rustlang.Rustup
   rustup default stable-x86_64-pc-windows-msvc

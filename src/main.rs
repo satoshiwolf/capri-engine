@@ -12,16 +12,17 @@ use capri_engine::gateway::WsGatewayServer;
 use capri_engine::gateway::protocol::{IncomingCommand, OutgoingEvent};
 use capri_engine::physics::PhysicsEngine;
 use capri_engine::render::hittest::create_default_mask;
+use capri_engine::render::pipeline::{Renderer, SpriteDraw, strip_name_for_stance};
 use capri_engine::render::sprites::SpriteManager;
 use capri_engine::render::vfx::VfxSystem;
 use capri_engine::render::window::{
-    IS_RUNNING, WindowSharedState, create_overlay_window, pump_messages,
+    CompositionOverlay, IS_RUNNING, pump_messages, should_capture_input, wait_for_messages,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.1.1 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.2.0 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<IncomingCommand>();
@@ -54,23 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (vx, vy, vr, vb) = virtual_desktop_bounds();
     let initial_pos = Vec2::new((vx + (vr - vx) / 2) as f32, (vb - 400) as f32);
 
-    let shared_state = WindowSharedState::new();
-    let hwnd = match create_overlay_window(shared_state.clone()) {
-        Ok(h) => {
-            println!(
-                "[WINDOW] Ventana overlay transparente creada (HWND: {:?})",
-                h
-            );
-            h
-        }
-        Err(e) => {
-            eprintln!(
-                "[WINDOW ERROR] Fallo creando ventana Win32: {}. Continuando sin ventana nativa...",
-                e
-            );
-            windows::Win32::Foundation::HWND(0 as _)
-        }
-    };
+    let mut overlay = CompositionOverlay::create().map_err(std::io::Error::other)?;
+    let hwnd = overlay.hwnd();
+    println!(
+        "[WINDOW] Ventana overlay transparente creada (HWND: {:?})",
+        hwnd
+    );
+    let mut renderer = Renderer::new(&overlay)
+        .await
+        .map_err(std::io::Error::other)?;
 
     let mut physics = PhysicsEngine::new(initial_pos);
     let mut vfx = VfxSystem::new();
@@ -98,13 +91,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
 
-        let mouse_pt = *shared_state.mouse_pos.lock().unwrap();
-        let mouse_down = *shared_state.is_mouse_down.lock().unwrap();
-        let cursor_screen = Vec2::new(mouse_pt.x as f32, mouse_pt.y as f32);
+        let (cursor_x, cursor_y) = overlay.poll_cursor().map_err(std::io::Error::other)?;
+        let cursor_screen = Vec2::new(cursor_x as f32, cursor_y as f32);
+        let mouse_down = overlay.input().mouse_down();
 
-        let active_mask = sprite_manager
-            .get_strip("idle")
-            .and_then(|s| s.masks.first())
+        let active_strip_name = strip_name_for_stance(physics.stance);
+        let active_strip = sprite_manager
+            .get_strip(active_strip_name)
+            .or_else(|| sprite_manager.get_strip("idle"))
+            .ok_or_else(|| std::io::Error::other("idle sprite failed to load"))?;
+        let active_frame = active_strip.frame_index_at(elapsed_secs);
+        let active_mask = active_strip
+            .masks
+            .get(active_frame)
+            .or_else(|| active_strip.masks.first())
             .unwrap_or(&default_mask);
 
         let is_over_capri = active_mask.hit_test_screen(
@@ -114,7 +114,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             physics.scale,
             physics.facing.as_f32(),
         );
-        *shared_state.should_hit_client.lock().unwrap() = is_over_capri;
+        let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance);
+        overlay.input().set_capture_input(capture_input);
+        overlay
+            .set_click_through(!capture_input)
+            .map_err(std::io::Error::other)?;
 
         if mouse_down && !was_mouse_down && is_over_capri {
             let _event = physics.pick_up(cursor_screen);
@@ -164,6 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let hard = (speed / 2000.0).clamp(0.0, 1.0);
                     vfx.emit_sparks(point, 12, normal);
                     vfx.emit_cracks(point, normal, hard);
+                    vfx.emit_shockwave(point, hard);
                     let _ = event_tx.send(OutgoingEvent::AvatarImpact {
                         speed,
                         normal_x: normal.x,
@@ -259,10 +264,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         vfx.update(dt);
+        renderer
+            .render(
+                SpriteDraw {
+                    strip: active_strip,
+                    frame_index: active_frame,
+                    center: physics.center_pos,
+                    rotation: physics.rotation,
+                    scale: physics.scale,
+                    facing: physics.facing.as_f32(),
+                },
+                &vfx,
+            )
+            .map_err(std::io::Error::other)?;
 
         let frame_time = frame_start.elapsed();
         if frame_time < target_frame_duration {
-            std::thread::sleep(target_frame_duration - frame_time);
+            let remaining = target_frame_duration - frame_time;
+            wait_for_messages(remaining.as_millis().max(1) as u32);
         }
     }
 

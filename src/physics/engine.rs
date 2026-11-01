@@ -295,8 +295,11 @@ impl PhysicsEngine {
             return Vec2::ZERO;
         }
 
-        let oldest = self.pointer_samples.front().unwrap();
-        let newest = self.pointer_samples.back().unwrap();
+        let (Some(oldest), Some(newest)) =
+            (self.pointer_samples.front(), self.pointer_samples.back())
+        else {
+            return Vec2::ZERO;
+        };
 
         let dt = (newest.timestamp - oldest.timestamp) as f32;
         if dt <= 0.001 {
