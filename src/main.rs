@@ -22,7 +22,7 @@ use capri_engine::render::window::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.2.0 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.2.1 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<IncomingCommand>();
@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance);
         overlay.input().set_capture_input(capture_input);
         overlay
-            .set_click_through(!capture_input)
+            .sync_input_capture(capture_input)
             .map_err(std::io::Error::other)?;
 
         if mouse_down && !was_mouse_down && is_over_capri {

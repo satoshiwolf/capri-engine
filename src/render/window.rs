@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice2, IDCompositionDesktopDevice, IDCompositionTarget, IDCompositionVisual,
 };
@@ -9,15 +9,15 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GWL_EXSTYLE, GetCursorPos,
-    GetWindowLongPtrW, HTCLIENT, HTTRANSPARENT, MA_NOACTIVATE,
-    MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
-    PostQuitMessage, QS_ALLINPUT, RegisterClassExW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, WINDOW_EX_STYLE, WM_DESTROY,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WNDCLASSEXW,
-    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, HTCLIENT, HTTRANSPARENT,
+    LWA_ALPHA, MA_NOACTIVATE, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx,
+    PM_REMOVE, PeekMessageW, PostQuitMessage, QS_ALLINPUT, RegisterClassExW, SW_HIDE,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
+    WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCHITTEST,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{IUnknown, Interface, PCWSTR, w};
 
@@ -137,34 +137,67 @@ unsafe extern "system" fn overlay_wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_NCHITTEST => {
-            if GLOBAL_INPUT
-                .get()
-                .is_some_and(|input| input.capture_input.load(Ordering::Acquire))
-            {
-                return LRESULT(HTCLIENT as isize);
-            }
-            LRESULT(HTTRANSPARENT as isize)
-        }
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-        WM_LBUTTONDOWN => {
-            if let Some(input) = GLOBAL_INPUT.get() {
-                input.mouse_down.store(true, Ordering::Release);
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONUP => {
-            if let Some(input) = GLOBAL_INPUT.get() {
-                input.mouse_down.store(false, Ordering::Release);
-            }
-            LRESULT(0)
-        }
-        WM_MOUSEMOVE => LRESULT(0),
         WM_DESTROY => {
             IS_RUNNING.store(false, Ordering::SeqCst);
             // SAFETY: PostQuitMessage has no pointer preconditions.
             unsafe {
                 PostQuitMessage(0);
+            }
+            LRESULT(0)
+        }
+        _ => {
+            // SAFETY: Windows supplies the original window handle and message parameters.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+    }
+}
+
+unsafe extern "system" fn input_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_NCHITTEST => {
+            if GLOBAL_INPUT
+                .get()
+                .is_some_and(|input| input.capture_input.load(Ordering::Acquire))
+            {
+                LRESULT(HTCLIENT as isize)
+            } else {
+                LRESULT(HTTRANSPARENT as isize)
+            }
+        }
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_LBUTTONDOWN => {
+            if let Some(input) = GLOBAL_INPUT.get()
+                && input.mouse_down.swap(true, Ordering::AcqRel)
+            {
+                return LRESULT(0);
+            }
+            // SAFETY: The input window is alive for the duration of the capture and
+            // belongs to the thread processing this message.
+            unsafe {
+                SetCapture(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            if let Some(input) = GLOBAL_INPUT.get()
+                && !input.mouse_down.swap(false, Ordering::AcqRel)
+            {
+                return LRESULT(0);
+            }
+            // SAFETY: Releasing capture is safe when this window does not own it.
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            if let Some(input) = GLOBAL_INPUT.get() {
+                input.mouse_down.store(false, Ordering::Release);
             }
             LRESULT(0)
         }
@@ -198,11 +231,8 @@ fn create_overlay_hwnd() -> Result<HWND, String> {
         let vw = vr - vx;
         let vh = vb - vy;
 
-        let ex_style = WS_EX_TOPMOST
-            | WS_EX_TOOLWINDOW
-            | WS_EX_NOREDIRECTIONBITMAP
-            | WS_EX_NOACTIVATE
-            | WS_EX_TRANSPARENT;
+        let ex_style =
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_NOACTIVATE;
         let style = WS_POPUP;
 
         let hwnd = CreateWindowExW(
@@ -235,6 +265,53 @@ fn create_overlay_hwnd() -> Result<HWND, String> {
     }
 }
 
+fn create_input_hwnd() -> Result<HWND, String> {
+    // SAFETY: The input class and window use process-lifetime resources. The input
+    // window remains hidden until an opaque sprite pixel is under the cursor.
+    unsafe {
+        let hinstance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {}", e))?;
+        let class_name = w!("CapriEngineInputWindow");
+        let window_class = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(input_wndproc),
+            hInstance: HINSTANCE(hinstance.0),
+            lpszClassName: PCWSTR(class_name.as_ptr()),
+            ..Default::default()
+        };
+        let _ = RegisterClassExW(&window_class);
+
+        let hwnd = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+            class_name,
+            w!("Capri Input"),
+            WS_POPUP,
+            0,
+            0,
+            16,
+            16,
+            None,
+            None,
+            Some(HINSTANCE(hinstance.0)),
+            None,
+        )
+        .map_err(|error| format!("CreateWindowExW input: {error}"))?;
+
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), 1, LWA_ALPHA)
+            .map_err(|error| format!("SetLayeredWindowAttributes: {error}"))?;
+        SetWindowPos(
+            hwnd,
+            Some(HWND(-1isize as *mut _)),
+            0,
+            0,
+            16,
+            16,
+            SWP_NOACTIVATE,
+        )
+        .map_err(|error| format!("SetWindowPos input: {error}"))?;
+        Ok(hwnd)
+    }
+}
+
 #[deprecated(
     since = "0.2.0",
     note = "Use `CompositionOverlay::create()`. This function will be removed in 0.3.0."
@@ -246,6 +323,7 @@ pub fn create_overlay_window(_state: WindowSharedState) -> Result<HWND, String> 
 
 pub struct CompositionOverlay {
     hwnd: HWND,
+    input_hwnd: HWND,
     origin: (i32, i32),
     size: (u32, u32),
     input: OverlayInput,
@@ -253,7 +331,7 @@ pub struct CompositionOverlay {
     _target: IDCompositionTarget,
     _device: IDCompositionDesktopDevice,
     _com: ComApartment,
-    click_through: bool,
+    input_visible: bool,
 }
 
 impl CompositionOverlay {
@@ -267,10 +345,16 @@ impl CompositionOverlay {
         }
 
         let hwnd = create_overlay_hwnd()?;
+        // SAFETY: The visual window remains visible and composed by DirectComposition,
+        // while disabling it removes it from mouse and keyboard input routing.
+        unsafe {
+            let _ = EnableWindow(hwnd, false);
+        }
         let (left, top, right, bottom) = virtual_desktop_bounds();
         let size = ((right - left) as u32, (bottom - top) as u32);
         let input = OverlayInput::new();
         let _ = GLOBAL_INPUT.set(input.clone());
+        let input_hwnd = create_input_hwnd()?;
 
         // SAFETY: The DirectComposition device is created without an external rendering
         // device, and the target and visual are owned for the lifetime of this overlay.
@@ -295,6 +379,7 @@ impl CompositionOverlay {
 
         let mut overlay = Self {
             hwnd,
+            input_hwnd,
             origin: (left, top),
             size,
             input,
@@ -302,9 +387,9 @@ impl CompositionOverlay {
             _target: target,
             _device: device,
             _com: com,
-            click_through: false,
+            input_visible: false,
         };
-        overlay.set_click_through(true)?;
+        overlay.sync_input_capture(false)?;
         Ok(overlay)
     }
 
@@ -314,6 +399,10 @@ impl CompositionOverlay {
 
     pub fn input(&self) -> &OverlayInput {
         &self.input
+    }
+
+    pub fn input_hwnd(&self) -> HWND {
+        self.input_hwnd
     }
 
     pub fn origin(&self) -> (i32, i32) {
@@ -344,35 +433,50 @@ impl CompositionOverlay {
         Ok((point.x, point.y))
     }
 
-    pub fn set_click_through(&mut self, click_through: bool) -> Result<(), String> {
-        if self.click_through == click_through {
+    pub fn sync_input_capture(&mut self, capture: bool) -> Result<(), String> {
+        if capture {
+            if self.input.mouse_down() {
+                return Ok(());
+            }
+            let (cursor_x, cursor_y) = self.input.cursor();
+            // SAFETY: The input window is a live topmost popup owned by this overlay.
+            // Moving it under the cursor only changes its hit-test area.
+            unsafe {
+                SetWindowPos(
+                    self.input_hwnd,
+                    Some(HWND(-1isize as *mut _)),
+                    cursor_x - 8,
+                    cursor_y - 8,
+                    16,
+                    16,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )
+                .map_err(|error| format!("SetWindowPos input: {error}"))?;
+            }
+            self.input_visible = true;
             return Ok(());
         }
 
-        // SAFETY: `hwnd` belongs to this overlay and remains valid for the lifetime of
-        // this object. Updating the extended style only changes mouse hit-testing.
-        unsafe {
-            let current = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE) as u32;
-            let mut style = WINDOW_EX_STYLE(current);
-            if click_through {
-                style |= WS_EX_TRANSPARENT;
-            } else {
-                style &= !WS_EX_TRANSPARENT;
-            }
-            SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, style.0 as isize);
-            SetWindowPos(
-                self.hwnd,
-                Some(HWND(-1isize as *mut _)),
-                0,
-                0,
-                0,
-                0,
-                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-            )
-            .map_err(|error| format!("SetWindowPos: {error}"))?;
+        if !self.input_visible {
+            return Ok(());
         }
-        self.click_through = click_through;
+        // SAFETY: Hiding the input window and releasing capture when it is hidden
+        // prevents stale button state after the cursor leaves the sprite.
+        unsafe {
+            let _ = ReleaseCapture();
+            self.input.mouse_down.store(false, Ordering::Release);
+            let _ = ShowWindow(self.input_hwnd, SW_HIDE);
+        }
+        self.input_visible = false;
         Ok(())
+    }
+
+    #[deprecated(
+        since = "0.2.1",
+        note = "Use `sync_input_capture()` to coordinate the dedicated input window. This method will be removed in 0.3.0."
+    )]
+    pub fn set_click_through(&mut self, click_through: bool) -> Result<(), String> {
+        self.sync_input_capture(!click_through)
     }
 
     pub fn create_surface(

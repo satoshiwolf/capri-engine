@@ -1,9 +1,23 @@
-/target
+/target/
 
-# AI Agent instructions & workspace configs
+# AI agent instructions and local workspace configuration
 AGENTS.md
 agents.md
-.agents
 .agents/
-.codex
 .codex/
+
+# Editor and IDE settings
+.idea/
+.vscode/
+
+# Local environment and runtime artifacts
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+desktop.ini
