@@ -1,0 +1,9 @@
+/target
+
+# AI Agent instructions & workspace configs
+AGENTS.md
+agents.md
+.agents
+.agents/
+.codex
+.codex/
