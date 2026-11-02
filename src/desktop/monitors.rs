@@ -35,6 +35,9 @@ pub fn can_cross_border(
 ) -> Option<usize> {
     let current = monitors.get(current_idx)?;
     let y_i = y as i32;
+    if y_i < current.bounds.1 || y_i >= current.bounds.3 {
+        return None;
+    }
 
     for (idx, mon) in monitors.iter().enumerate() {
         if idx == current_idx {
@@ -104,6 +107,18 @@ mod tests {
         assert_eq!(can_cross_border(0, 1, 300.0, &monitors), None);
         assert_eq!(can_cross_border(0, 1, 500.0, &monitors), Some(1));
         assert_eq!(can_cross_border(0, 1, 1480.0, &monitors), None);
+    }
+
+    #[test]
+    fn border_crossing_requires_position_inside_current_monitor() {
+        let monitors = [
+            monitor("main", (0, 100, 1920, 1080), true),
+            monitor("neighbor", (1920, 0, 3840, 900), false),
+        ];
+
+        assert_eq!(can_cross_border(0, 1, 50.0, &monitors), None);
+        assert_eq!(can_cross_border(0, 1, 500.0, &monitors), Some(1));
+        assert_eq!(can_cross_border(0, 1, 1080.0, &monitors), None);
     }
 
     #[test]
