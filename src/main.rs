@@ -20,7 +20,9 @@ use capri_engine::core::visual::VisualTransform;
 use capri_engine::desktop::monitors::{enumerate_monitors, virtual_desktop_bounds};
 use capri_engine::desktop::{LedgeScanner, ledge_surfaces};
 use capri_engine::gateway::protocol::{IncomingCommand, OutgoingEvent};
-use capri_engine::gateway::{CommandContext, WsGatewayServer, dispatch_command};
+use capri_engine::gateway::{
+    CommandContext, WsGatewayServer, dispatch_command, send_engine_telemetry,
+};
 use capri_engine::physics::collision::LedgeSurface;
 use capri_engine::physics::{PhysicsSnapshot, PhysicsWorker};
 use capri_engine::render::animation::{
@@ -87,7 +89,7 @@ impl DragState {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.47 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.48 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -256,23 +258,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             physics = output.snapshot;
             for event in output.events {
                 animation.on_engine_event(&event);
-                send_physics_telemetry(&event_tx, &event, physics.center_pos().x);
-                match &event {
-                    EngineEvent::Grabbed { screen_pos, .. } => {
-                        let _ = event_tx.send(OutgoingEvent::AvatarGrabbed {
-                            x: screen_pos.x,
-                            y: screen_pos.y,
-                        });
-                    }
-                    EngineEvent::Thrown { velocity, speed } => {
-                        let _ = event_tx.send(OutgoingEvent::AvatarThrown {
-                            speed: *speed,
-                            vx: velocity.x,
-                            vy: velocity.y,
-                        });
-                    }
-                    _ => {}
-                }
+                send_engine_telemetry(&event_tx, &event, physics.center_pos().x);
                 if let EngineEvent::Impact {
                     normal,
                     speed,
@@ -540,45 +526,5 @@ fn current_motion(physics: &PhysicsSnapshot, cursor_motion: Vec2) -> Vec2 {
             .flight()
             .map_or(Vec2::ZERO, |flight| flight.velocity),
         _ => Vec2::ZERO,
-    }
-}
-
-fn send_physics_telemetry(
-    event_tx: &broadcast::Sender<OutgoingEvent>,
-    event: &EngineEvent,
-    body_x: f32,
-) {
-    match event {
-        EngineEvent::Impact {
-            normal,
-            speed,
-            window_title,
-            ..
-        } => {
-            let _ = event_tx.send(OutgoingEvent::AvatarImpact {
-                speed: *speed,
-                normal_x: normal.x,
-                normal_y: normal.y,
-                window_title: window_title.clone(),
-            });
-        }
-        EngineEvent::Landed {
-            surface_y,
-            window_title,
-            skid,
-        } => {
-            let _ = event_tx.send(OutgoingEvent::AvatarLanded {
-                surface: if window_title.is_some() {
-                    "window".to_string()
-                } else {
-                    "floor".to_string()
-                },
-                window_title: window_title.clone(),
-                x: body_x,
-                y: *surface_y,
-                skid: *skid,
-            });
-        }
-        _ => {}
     }
 }
