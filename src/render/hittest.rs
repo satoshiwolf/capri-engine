@@ -1,4 +1,5 @@
 use crate::core::config::{MID_POINT, SPRITE_HEIGHT, SPRITE_WIDTH};
+use crate::core::visual::VisualTransform;
 use glam::Vec2;
 
 /// One-byte-per-pixel opacity mask for CPU-only hit testing.
@@ -41,17 +42,26 @@ impl AlphaBitmask {
         scale: f32,
         facing_x: f32,
     ) -> bool {
-        let delta = screen_point - center_pos;
+        let facing = if facing_x < 0.0 {
+            crate::core::state::Facing::Left
+        } else {
+            crate::core::state::Facing::Right
+        };
+        self.hit_test_transformed(
+            screen_point,
+            VisualTransform::new(center_pos, rotation_degrees, Vec2::splat(scale), facing),
+            MID_POINT,
+        )
+    }
 
-        let rad = -rotation_degrees.to_radians();
-        let cos = rad.cos();
-        let sin = rad.sin();
-        let unrotated = Vec2::new(delta.x * cos - delta.y * sin, delta.x * sin + delta.y * cos);
-
-        let local_x = (unrotated.x / (scale * facing_x)) + MID_POINT.x;
-        let local_y = (unrotated.y / scale) + MID_POINT.y;
-
-        self.is_solid(local_x.round() as i32, local_y.round() as i32)
+    pub fn hit_test_transformed(
+        &self,
+        screen_point: Vec2,
+        transform: VisualTransform,
+        pivot: Vec2,
+    ) -> bool {
+        let local = transform.screen_to_local(screen_point) + pivot;
+        self.is_solid(local.x.round() as i32, local.y.round() as i32)
     }
 }
 
@@ -79,5 +89,22 @@ mod tests {
         assert!(mask.is_solid(0, 0));
         assert!(!mask.is_solid(1, 1));
         assert!(!mask.is_solid(10, 10));
+    }
+
+    #[test]
+    fn transformed_hit_test_matches_render_transform() {
+        let mut alpha = vec![0; 20 * 20];
+        alpha[10 * 20 + 10] = 255;
+        let mask = AlphaBitmask::new(20, 20, alpha);
+        let transform = VisualTransform::new(
+            Vec2::new(100.0, 100.0),
+            30.0,
+            Vec2::new(1.5, 0.75),
+            crate::core::state::Facing::Right,
+        );
+        let pivot = Vec2::new(10.0, 10.0);
+        let screen = transform.apply(Vec2::ZERO);
+
+        assert!(mask.hit_test_transformed(screen, transform, pivot));
     }
 }

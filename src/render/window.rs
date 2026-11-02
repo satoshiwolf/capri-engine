@@ -28,7 +28,7 @@ pub static IS_RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[deprecated(
     since = "0.2.0",
-    note = "Use `OverlayInput` and `CompositionOverlay`. This type will be removed in 0.3.0."
+    note = "Use `OverlayInput` and `CompositionOverlay`. This type will be removed in 0.4.0."
 )]
 #[derive(Clone)]
 pub struct WindowSharedState {
@@ -318,7 +318,7 @@ fn create_input_hwnd() -> Result<HWND, String> {
 
 #[deprecated(
     since = "0.2.0",
-    note = "Use `CompositionOverlay::create()`. This function will be removed in 0.3.0."
+    note = "Use `CompositionOverlay::create()`. This function will be removed in 0.4.0."
 )]
 #[allow(deprecated)]
 pub fn create_overlay_window(_state: WindowSharedState) -> Result<HWND, String> {
@@ -472,7 +472,7 @@ impl CompositionOverlay {
 
     #[deprecated(
         since = "0.2.1",
-        note = "Use `sync_input_capture()` to coordinate the dedicated input window. This method will be removed in 0.3.0."
+        note = "Use `sync_input_capture()` to coordinate the dedicated input window. This method will be removed in 0.4.0."
     )]
     pub fn set_click_through(&mut self, click_through: bool) -> Result<(), String> {
         self.sync_input_capture(!click_through)

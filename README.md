@@ -49,7 +49,7 @@ flowchart TB
 ```
 
 ### Architecture Benefits:
-- **Zero latency and maximum fluidity**: The physics engine runs at a consistent 60/120 FPS, consuming ~15-25 MB of memory and 0% idle CPU.
+- **Designed for fluid interaction**: Rendering follows display VSync at a configurable 60/120 Hz target. Engine-owned sprite residency targets 25 MiB; total process and GPU-driver memory are measured separately.
 - **Polyglot flexibility**: Your agent can be written in Python, TypeScript, Go, or C#; it only needs to exchange JSON over WebSocket.
 - **Fault isolation**: If the AI model takes seconds to respond or TTS fails, Capri keeps swaying, bouncing, and sitting naturally on your desktop without stuttering.
 
@@ -61,26 +61,26 @@ The table below tracks the implementation status of all core systems across phys
 
 | Category | Feature / Mechanic | Specification & Details | Status |
 | :--- | :--- | :--- | :--- |
-| **Physics** | Drag & Inertial Pendulum (`Held`) | Relative anchor point, angular spring damping, mane velocity smear | Completed |
+| **Physics** | Drag & Inertial Pendulum (`Held`) | Relative anchor point, angular spring damping, render-space smear and echo | Completed |
 | **Physics** | Ballistic Throw (`throwHer`) | Pointer velocity buffer, parabolic trajectory, tumbling spin, streak release | Completed |
 | **Physics** | Collision & Impact Mechanics | Surface bounce restitution, 1-4 frame anime hit-stop, squash & stretch | Completed |
 | **Physics** | Impact Particles (VFX) | Dynamic neon shockwave rings and spark particle bursts on contact | Completed |
 | **Physics** | Ninja Skid Landing (`Skid`) | Sliding friction deceleration and spark emission on foot contact | Completed |
 | **Physics** | Knockout K.O. (`Dazed`) | Head impact knockout state with orbiting 3D neon stars | Completed |
-| **Physics** | Ceiling Suspension (`Upside`) | Screen ceiling hang hook stance | Completed |
-| **Physics** | Cursor Ride & Follow (`Ride`) | Riding or clinging directly to the active mouse pointer | Pending |
+| **Physics** | Ceiling Suspension (`Upside`) | Screen ceiling hang pose with command-driven support | In Progress |
+| **Physics** | Cursor Ride & Follow (`Ride`) | Stable cursor-follow pose driven by a gateway action | In Progress |
 | **Physics** | Screen Corner Resting (`Corner`) | Specialized tucked perching stance in display corners | Pending |
 | **Desktop** | Active Window Ledges Scan | Native Win32 enumeration (`EnumWindows`, `DwmGetWindowAttribute`) | Completed |
 | **Desktop** | 1D Z-Order Ledges Subtraction | Interval clipping subtracting higher Z-order occlusions | Completed |
-| **Desktop** | Ledge Perching Behavior (`Perch`) | Dynamic perch tracking moving windows; freefall on minimize/close | Completed |
+| **Desktop** | Ledge Perching Behavior (`Perch`) | Horizontal span collision, sit/lay-down loop, and freefall when support disappears | Completed |
 | **Desktop** | Multi-Monitor Topology | Virtual coordinate mapping (`EnumDisplayMonitors`) | Completed |
-| **Desktop** | Display Border Crossover | Seamless traversal across adjacent screens; boundary bouncing | Completed |
+| **Desktop** | Display Border Crossover | Seamless traversal across adjacent screens; boundary bouncing | Pending |
 | **Render** | DirectComposition Overlay | Win32 transparent window (`WS_EX_NOREDIRECTIONBITMAP`, DX12/Vulkan) | Completed |
 | **Render** | Per-Pixel Alpha Hit-Testing | RAM bitmask query in `WM_NCHITTEST` (< 0.01 ms, zero GPU readback) | Completed |
-| **Render** | Sprite Atlas & Animation Engine | 38 sprite strips with frame pacing and stance mapping | Completed |
+| **Render** | Sprite Animation Engine | Local clip clocks, priorities, transitions, flipped assets, speech overlays, and pose mapping | Completed |
 | **Render** | Advanced WGSL Shaders | Full-screen post-processing (screen cracks, Relic chromatic aberration) | In Progress |
 | **Gateway** | Asynchronous Tokio Loopback | Standalone WebSocket server listening on `ws://127.0.0.1:47823` | Completed |
-| **Gateway** | Typed Inbound Protocol (Serde) | `speak`, `lip_sync`, `emotion`, `point_at`, `action` commands | Completed |
+| **Gateway** | Typed Inbound Protocol (Serde) | `speak`, `lip_sync`, `emotion`, `point_at`, `action` commands with visual speech wiring | Completed |
 | **Gateway** | Typed Outbound Telemetry (Serde) | `avatar_grabbed`, `avatar_thrown`, `avatar_impact`, `avatar_landed`, `monitor_changed` | Completed |
 | **Gateway** | Test & Verification Suite | Interactive client mock script (`scripts/agent_mock.js`) and unit tests | Completed |
 
@@ -282,6 +282,8 @@ cargo test
 ```powershell
 cargo run --release
 ```
+
+The render target defaults to 60 Hz. Set `CAPRI_TARGET_FPS=120` to request the 120 Hz cadence on compatible displays.
 
 ### Test with Mock Agent:
 In another terminal while `capri-engine` is running:

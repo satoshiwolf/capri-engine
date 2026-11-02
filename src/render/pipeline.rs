@@ -1,24 +1,32 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
 
 use crate::core::config::MID_POINT;
-use crate::core::state::Stance;
+use crate::core::state::{Facing, Stance};
+use crate::core::visual::VisualTransform;
+use crate::render::animation::{ClipCatalog, base_clip_for_stance};
 use crate::render::sprites::SpriteStrip;
 use crate::render::vfx::VfxSystem;
 use crate::render::window::CompositionOverlay;
 
 const SPRITE_VERTEX_COUNT: usize = 6;
+const MAX_SPRITE_VERTICES: usize = 4096;
 const MAX_EFFECT_VERTICES: usize = 16_384;
-const SHOCKWAVE_SEGMENTS: usize = 32;
+const SHOCKWAVE_SEGMENTS: usize = 64;
 const COPY_BYTES_PER_ROW_ALIGNMENT: usize = 256;
 
-const SPRITE_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32];
-const EFFECT_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
+const SPRITE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    0 => Float32x2,
+    1 => Float32x2,
+    2 => Uint32,
+    3 => Float32x4,
+    4 => Float32x4
+];
+const EFFECT_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32];
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -26,6 +34,8 @@ pub struct SpriteVertex {
     pub position: [f32; 2],
     pub uv: [f32; 2],
     pub layer: u32,
+    pub tint: [f32; 4],
+    pub params: [f32; 4],
 }
 
 impl SpriteVertex {
@@ -43,6 +53,7 @@ impl SpriteVertex {
 pub struct EffectVertex {
     pub position: [f32; 2],
     pub color: [f32; 4],
+    pub edge: f32,
 }
 
 impl EffectVertex {
@@ -55,11 +66,7 @@ impl EffectVertex {
     }
 }
 
-struct GpuSprite {
-    _texture: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-}
-
+#[derive(Debug, Clone, Copy)]
 pub struct SpriteDraw<'a> {
     pub strip: &'a SpriteStrip,
     pub frame_index: usize,
@@ -67,6 +74,49 @@ pub struct SpriteDraw<'a> {
     pub rotation: f32,
     pub scale: f32,
     pub facing: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SpriteInstance<'a> {
+    pub strip: &'a SpriteStrip,
+    pub frame_index: usize,
+    pub transform: VisualTransform,
+    pub pivot: Vec2,
+    pub mirror_uv: bool,
+    pub tint: [f32; 4],
+    pub flash: f32,
+    pub glitch: f32,
+    pub alpha: f32,
+    pub smear: Vec2,
+    pub echo: Vec2,
+}
+
+impl<'a> SpriteInstance<'a> {
+    pub fn new(
+        strip: &'a SpriteStrip,
+        frame_index: usize,
+        transform: VisualTransform,
+        pivot: Vec2,
+    ) -> Self {
+        Self {
+            strip,
+            frame_index,
+            transform,
+            pivot,
+            mirror_uv: false,
+            tint: [1.0, 1.0, 1.0, 1.0],
+            flash: 0.0,
+            glitch: 0.0,
+            alpha: 1.0,
+            smear: Vec2::ZERO,
+            echo: Vec2::ZERO,
+        }
+    }
+}
+
+struct GpuSprite {
+    _texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
 }
 
 pub struct Renderer {
@@ -186,7 +236,7 @@ impl Renderer {
                 immediate_size: 0,
             });
 
-        let blend = wgpu::BlendState {
+        let alpha_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
@@ -198,9 +248,26 @@ impl Renderer {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let color_target = [Some(wgpu::ColorTargetState {
+        let additive_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let sprite_color_target = [Some(wgpu::ColorTargetState {
             format,
-            blend: Some(blend),
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let effect_color_target = [Some(wgpu::ColorTargetState {
+            format,
+            blend: Some(additive_blend),
             write_mask: wgpu::ColorWrites::ALL,
         })];
         let primitive = wgpu::PrimitiveState {
@@ -225,7 +292,7 @@ impl Renderer {
                 module: &sprite_shader,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
-                targets: &color_target,
+                targets: &sprite_color_target,
             }),
             multiview_mask: None,
             cache: None,
@@ -246,14 +313,14 @@ impl Renderer {
                 module: &effect_shader,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
-                targets: &color_target,
+                targets: &effect_color_target,
             }),
             multiview_mask: None,
             cache: None,
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Capri Nearest Sprite Sampler"),
+            label: Some("Capri Sprite Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -264,7 +331,7 @@ impl Renderer {
         });
         let sprite_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Capri Sprite Vertex Buffer"),
-            size: (SPRITE_VERTEX_COUNT * std::mem::size_of::<SpriteVertex>()) as u64,
+            size: (MAX_SPRITE_VERTICES * std::mem::size_of::<SpriteVertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -293,14 +360,41 @@ impl Renderer {
         })
     }
 
-    pub fn render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> Result<(), String> {
-        let bind_group = self.sprite_bind_group(sprite.strip)?;
-        let sprite_vertices = sprite_vertices(sprite, self.origin, self.viewport);
-        self.queue.write_buffer(
-            &self.sprite_buffer,
-            0,
-            bytemuck::cast_slice(&sprite_vertices),
-        );
+    pub fn prepare_strip(&mut self, strip: &SpriteStrip) -> Result<(), String> {
+        let _ = self.sprite_bind_group(strip)?;
+        Ok(())
+    }
+
+    pub fn retain_sprites(&mut self, names: &HashSet<String>) {
+        self.sprite_cache.retain(|name, _| names.contains(name));
+    }
+
+    pub fn render_animation(
+        &mut self,
+        body: SpriteInstance<'_>,
+        mouth: Option<SpriteInstance<'_>>,
+        vfx: &VfxSystem,
+    ) -> Result<(), String> {
+        let body_bind_group = self.sprite_bind_group(body.strip)?;
+        let mouth_bind_group = mouth
+            .as_ref()
+            .map(|instance| self.sprite_bind_group(instance.strip))
+            .transpose()?;
+
+        let mut sprite_vertices = Vec::with_capacity(MAX_SPRITE_VERTICES.min(64));
+        append_sprite_layers(&mut sprite_vertices, body, self.origin, self.viewport);
+        let body_vertex_count = sprite_vertices.len() as u32;
+        if let Some(mouth) = mouth {
+            append_plain_sprite(&mut sprite_vertices, mouth, self.origin, self.viewport);
+        }
+        let total_sprite_vertices = sprite_vertices.len() as u32;
+        if total_sprite_vertices > 0 {
+            self.queue.write_buffer(
+                &self.sprite_buffer,
+                0,
+                bytemuck::cast_slice(&sprite_vertices),
+            );
+        }
 
         let effect_vertices = effect_vertices(vfx, self.origin, self.viewport);
         if !effect_vertices.is_empty() {
@@ -348,10 +442,21 @@ impl Renderer {
                 color_attachments: &[color_attachment],
                 ..Default::default()
             });
-            render_pass.set_pipeline(&self.sprite_pipeline);
-            render_pass.set_bind_group(0, &bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.sprite_buffer.slice(..));
-            render_pass.draw(0..SPRITE_VERTEX_COUNT as u32, 0..1);
+
+            if body_vertex_count > 0 {
+                render_pass.set_pipeline(&self.sprite_pipeline);
+                render_pass.set_bind_group(0, &body_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.sprite_buffer.slice(..));
+                render_pass.draw(0..body_vertex_count, 0..1);
+            }
+
+            if let Some(mouth_bind_group) = mouth_bind_group
+                && total_sprite_vertices > body_vertex_count
+            {
+                render_pass.set_pipeline(&self.sprite_pipeline);
+                render_pass.set_bind_group(0, &mouth_bind_group, &[]);
+                render_pass.draw(body_vertex_count..total_sprite_vertices, 0..1);
+            }
 
             if !effect_vertices.is_empty() {
                 render_pass.set_pipeline(&self.effect_pipeline);
@@ -362,6 +467,26 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(surface_texture);
         Ok(())
+    }
+
+    pub fn render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> Result<(), String> {
+        let facing = if sprite.facing < 0.0 {
+            Facing::Left
+        } else {
+            Facing::Right
+        };
+        let instance = SpriteInstance::new(
+            sprite.strip,
+            sprite.frame_index,
+            VisualTransform::new(
+                sprite.center,
+                sprite.rotation,
+                Vec2::splat(sprite.scale),
+                facing,
+            ),
+            MID_POINT,
+        );
+        self.render_animation(instance, None, vfx)
     }
 
     fn reconfigure(&self) -> Result<(), String> {
@@ -474,22 +599,76 @@ impl Renderer {
 }
 
 pub fn strip_name_for_stance(stance: Stance) -> &'static str {
-    match stance {
-        Stance::Held => "dangle",
-        Stance::Sit | Stance::LayDown | Stance::Corner => "perch",
-        _ => "idle",
-    }
+    ClipCatalog::spec(base_clip_for_stance(stance)).filename
 }
 
-pub fn sprite_vertices(sprite: SpriteDraw<'_>, origin: Vec2, viewport: Vec2) -> Vec<SpriteVertex> {
-    if sprite.strip.frame_count == 0 {
-        return Vec::new();
+fn append_sprite_layers(
+    vertices: &mut Vec<SpriteVertex>,
+    body: SpriteInstance<'_>,
+    origin: Vec2,
+    viewport: Vec2,
+) {
+    if body.echo != Vec2::ZERO {
+        append_tinted_sprite(
+            vertices,
+            body,
+            -body.echo,
+            [0.20, 1.0, 0.48, 0.30 * body.alpha],
+            origin,
+            viewport,
+        );
+        append_tinted_sprite(
+            vertices,
+            body,
+            body.echo,
+            [1.0, 0.13, 0.32, 0.26 * body.alpha],
+            origin,
+            viewport,
+        );
     }
-    let frame_index = sprite.frame_index % sprite.strip.frame_count;
-    let width = sprite.strip.frame_width as f32;
-    let height = sprite.strip.frame_height as f32;
-    let radians = sprite.rotation.to_radians();
-    let (sin, cos) = radians.sin_cos();
+    if body.smear != Vec2::ZERO {
+        append_tinted_sprite(
+            vertices,
+            body,
+            -body.smear,
+            [0.82, 0.88, 1.0, 0.20 * body.alpha],
+            origin,
+            viewport,
+        );
+    }
+    append_plain_sprite(vertices, body, origin, viewport);
+}
+
+fn append_tinted_sprite(
+    vertices: &mut Vec<SpriteVertex>,
+    mut instance: SpriteInstance<'_>,
+    offset: Vec2,
+    tint: [f32; 4],
+    origin: Vec2,
+    viewport: Vec2,
+) {
+    instance.transform.center += offset;
+    instance.tint = tint;
+    instance.flash = 0.0;
+    append_plain_sprite(vertices, instance, origin, viewport);
+}
+
+fn append_plain_sprite(
+    vertices: &mut Vec<SpriteVertex>,
+    instance: SpriteInstance<'_>,
+    origin: Vec2,
+    viewport: Vec2,
+) {
+    if vertices.len() + SPRITE_VERTEX_COUNT > MAX_SPRITE_VERTICES {
+        return;
+    }
+    let frame_count = instance.strip.frame_count;
+    if frame_count == 0 {
+        return;
+    }
+    let frame_index = instance.frame_index % frame_count;
+    let width = instance.strip.frame_width as f32;
+    let height = instance.strip.frame_height as f32;
     let corners = [
         (0.0, 0.0, 0.0, 0.0),
         (width, 0.0, 1.0, 0.0),
@@ -498,18 +677,44 @@ pub fn sprite_vertices(sprite: SpriteDraw<'_>, origin: Vec2, viewport: Vec2) -> 
         (width, height, 1.0, 1.0),
         (0.0, height, 0.0, 1.0),
     ];
-    let mut vertices = Vec::with_capacity(SPRITE_VERTEX_COUNT);
     for (local_x, local_y, u, v) in corners {
-        let x = (local_x - MID_POINT.x) * sprite.scale * sprite.facing;
-        let y = (local_y - MID_POINT.y) * sprite.scale;
-        let rotated = Vec2::new(x * cos - y * sin, x * sin + y * cos);
-        let screen = sprite.center + rotated;
+        let local_delta = Vec2::new(local_x, local_y) - instance.pivot;
+        let screen = instance.transform.apply(local_delta);
         vertices.push(SpriteVertex {
             position: world_to_clip(screen, origin, viewport).into(),
-            uv: [if sprite.facing >= 0.0 { u } else { 1.0 - u }, v],
+            uv: [if instance.mirror_uv { 1.0 - u } else { u }, v],
             layer: frame_index as u32,
+            tint: instance.tint,
+            params: [
+                instance.flash,
+                instance.glitch,
+                instance.alpha,
+                instance.glitch * 2.5,
+            ],
         });
     }
+}
+
+pub fn sprite_vertices(sprite: SpriteDraw<'_>, origin: Vec2, viewport: Vec2) -> Vec<SpriteVertex> {
+    let facing = if sprite.facing < 0.0 {
+        Facing::Left
+    } else {
+        Facing::Right
+    };
+    let mut instance = SpriteInstance::new(
+        sprite.strip,
+        sprite.frame_index,
+        VisualTransform::new(
+            sprite.center,
+            sprite.rotation,
+            Vec2::splat(sprite.scale),
+            facing,
+        ),
+        MID_POINT,
+    );
+    instance.mirror_uv = sprite.facing < 0.0;
+    let mut vertices = Vec::with_capacity(SPRITE_VERTEX_COUNT);
+    append_plain_sprite(&mut vertices, instance, origin, viewport);
     vertices
 }
 
@@ -520,10 +725,16 @@ pub fn effect_vertices(vfx: &VfxSystem, origin: Vec2, viewport: Vec2) -> Vec<Eff
     for spark in &vfx.sparks {
         let alpha = (spark.life / spark.max_life).clamp(0.0, 1.0);
         push((
-            spark.pos - Vec2::splat(1.5),
-            spark.pos + Vec2::splat(1.5),
-            2.5,
+            spark.pos - Vec2::splat(2.0),
+            spark.pos + Vec2::splat(2.0),
+            3.5,
             premultiply(spark.color_rgb, alpha),
+        ));
+        push((
+            spark.pos - Vec2::splat(0.7),
+            spark.pos + Vec2::splat(0.7),
+            1.2,
+            premultiply([1.0, 0.95, 0.72], alpha),
         ));
     }
     for wave in &vfx.shockwaves {
@@ -534,7 +745,13 @@ pub fn effect_vertices(vfx: &VfxSystem, origin: Vec2, viewport: Vec2) -> Vec<Eff
                 (segment + 1) as f32 * std::f32::consts::TAU / SHOCKWAVE_SEGMENTS as f32;
             let start = wave.center + Vec2::new(start_angle.cos(), start_angle.sin()) * wave.radius;
             let end = wave.center + Vec2::new(end_angle.cos(), end_angle.sin()) * wave.radius;
-            push((start, end, 2.5, premultiply([0.2, 0.85, 1.0], alpha)));
+            push((
+                start,
+                end,
+                7.0,
+                premultiply([0.12, 0.55, 0.95], alpha * 0.32),
+            ));
+            push((start, end, 2.2, premultiply([0.36, 0.95, 1.0], alpha)));
         }
     }
     for crack in &vfx.cracks {
@@ -542,9 +759,35 @@ pub fn effect_vertices(vfx: &VfxSystem, origin: Vec2, viewport: Vec2) -> Vec<Eff
         push((
             crack.start,
             crack.end,
-            1.5,
+            4.0,
+            premultiply([0.22, 0.48, 1.0], alpha * 0.35),
+        ));
+        push((
+            crack.start,
+            crack.end,
+            1.25,
             premultiply([0.75, 0.95, 1.0], alpha),
         ));
+    }
+    if let Some(stars) = &vfx.dizzy {
+        let alpha = (stars.life / 2.4).clamp(0.0, 1.0);
+        for index in 0..4 {
+            let angle = stars.phase + index as f32 * std::f32::consts::FRAC_PI_2;
+            let center = stars.center + Vec2::new(angle.cos() * 36.0, angle.sin() * 12.0 - 28.0);
+            let size = 4.0 + (angle.sin() + 1.0) * 1.5;
+            push((
+                center - Vec2::new(size, size * 0.25),
+                center + Vec2::new(size, size * 0.25),
+                2.8,
+                premultiply([1.0, 0.72, 0.18], alpha),
+            ));
+            push((
+                center - Vec2::new(size * 0.25, size),
+                center + Vec2::new(size * 0.25, size),
+                2.8,
+                premultiply([1.0, 0.72, 0.18], alpha),
+            ));
+        }
     }
 
     vertices.truncate(MAX_EFFECT_VERTICES);
@@ -570,8 +813,20 @@ fn append_line(
     let b = world_to_clip(start - normal, origin, viewport).into();
     let c = world_to_clip(end + normal, origin, viewport).into();
     let d = world_to_clip(end - normal, origin, viewport).into();
-    for position in [a, b, c, c, b, d] {
-        vertices.push(EffectVertex { position, color });
+    let points = [
+        (a, 1.0),
+        (b, -1.0),
+        (c, 1.0),
+        (c, 1.0),
+        (b, -1.0),
+        (d, -1.0),
+    ];
+    for (position, edge) in points {
+        vertices.push(EffectVertex {
+            position,
+            color,
+            edge,
+        });
     }
 }
 
@@ -608,9 +863,10 @@ mod tests {
 
     #[test]
     fn stance_selects_expected_sprite() {
-        assert_eq!(strip_name_for_stance(Stance::Held), "dangle");
-        assert_eq!(strip_name_for_stance(Stance::Sit), "perch");
-        assert_eq!(strip_name_for_stance(Stance::Fly), "idle");
+        assert_eq!(strip_name_for_stance(Stance::Held), "dangle.png");
+        assert_eq!(strip_name_for_stance(Stance::Sit), "perch.png");
+        assert_eq!(strip_name_for_stance(Stance::Fly), "dangle.png");
+        assert_eq!(strip_name_for_stance(Stance::Dazed), "laydown.png");
     }
 
     #[test]
@@ -637,17 +893,46 @@ mod tests {
     }
 
     #[test]
+    fn nonuniform_scale_changes_width_and_height_independently() {
+        let strip = strip();
+        let mut instance = SpriteInstance::new(
+            &strip,
+            0,
+            VisualTransform::new(Vec2::ZERO, 0.0, Vec2::new(2.0, 0.5), Facing::Right),
+            Vec2::new(5.0, 10.0),
+        );
+        let mut vertices = Vec::new();
+        append_plain_sprite(&mut vertices, instance, Vec2::ZERO, Vec2::splat(100.0));
+        let width = vertices.iter().map(|v| v.position[0]).fold(0.0, f32::max)
+            - vertices
+                .iter()
+                .map(|v| v.position[0])
+                .fold(f32::INFINITY, f32::min);
+        let height = vertices.iter().map(|v| v.position[1]).fold(0.0, f32::max)
+            - vertices
+                .iter()
+                .map(|v| v.position[1])
+                .fold(f32::INFINITY, f32::min);
+        assert!(width > height);
+
+        instance.echo = Vec2::X;
+        let mut layered = Vec::new();
+        append_sprite_layers(&mut layered, instance, Vec2::ZERO, Vec2::splat(100.0));
+        assert_eq!(layered.len(), SPRITE_VERTEX_COUNT * 3);
+    }
+
+    #[test]
     fn empty_effects_generate_no_geometry() {
         assert!(effect_vertices(&VfxSystem::new(), Vec2::ZERO, Vec2::ONE).is_empty());
     }
 
     #[test]
-    fn spark_generates_one_quad() {
+    fn spark_generates_two_quads() {
         let mut vfx = VfxSystem::new();
         vfx.emit_sparks(Vec2::new(20.0, 20.0), 1, Vec2::new(1.0, 0.0));
         assert_eq!(
             effect_vertices(&vfx, Vec2::ZERO, Vec2::splat(100.0)).len(),
-            6
+            SPRITE_VERTEX_COUNT * 2
         );
     }
 
@@ -658,7 +943,7 @@ mod tests {
         assert_eq!(vfx.shockwaves.len(), 1);
         assert_eq!(
             effect_vertices(&vfx, Vec2::ZERO, Vec2::splat(100.0)).len(),
-            SHOCKWAVE_SEGMENTS * 6
+            SHOCKWAVE_SEGMENTS * SPRITE_VERTEX_COUNT * 2
         );
     }
 }

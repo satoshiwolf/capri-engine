@@ -49,7 +49,7 @@ flowchart TB
 ```
 
 ### Ventajas de esta Arquitectura:
-- **Cero latencia y maxima fluidez**: El motor fisico corre a 60/120 FPS sin inmutarse, consumiendo ~15-25 MB de memoria y 0% de CPU en reposo.
+- **Disenado para interaccion fluida**: El render sigue VSync con un objetivo configurable de 60/120 Hz. Los datos de sprites residentes apuntan a 25 MiB; la memoria total del proceso y del driver grafico se mide por separado.
 - **Libertad poliglota**: Tu agente puede estar escrito en Python, TypeScript, Go o C#; solo necesita enviar y recibir JSON por WebSocket.
 - **Aislamiento contra fallos**: Si el modelo de IA demora en generar una respuesta o el TTS falla, Capri sigue balanceandose, rebotando y sentandose de forma natural en tu escritorio.
 
@@ -61,26 +61,26 @@ La siguiente tabla resume el estado de implementacion de todos los subsistemas d
 
 | Categoria | Caracteristica / Mecanica | Especificacion y Detalles | Estado |
 | :--- | :--- | :--- | :--- |
-| **Fisica** | Arrastre y Pendulo Inercial (`Held`) | Anclaje relativo, resorte angular amortiguado, deformacion de melena | Completado |
+| **Fisica** | Arrastre y Pendulo Inercial (`Held`) | Anclaje relativo, resorte angular amortiguado, smear y eco en espacio de render | Completado |
 | **Fisica** | Lanzamiento Balistico (`throwHer`) | Buffer de velocidad, trayectoria parabolica, spin tumbling, estelas | Completado |
 | **Fisica** | Colisiones e Impactos | Restitucion de rebote, hit-stop anime (1-4 frames), squash & stretch | Completado |
 | **Fisica** | Particulas de Impacto (VFX) | Ondas de choque neon circulares y emision de chispas en colision | Completado |
 | **Fisica** | Aterrizaje con Derrape (`Skid`) | Desaceleracion por friccion y chispas de frenado al caer de pie | Completado |
 | **Fisica** | Noqueo K.O. (`Dazed`) | Estado noqueado por impacto violento con estrellas orbitando en 3D | Completado |
-| **Fisica** | Colgado de Techo (`Upside`) | Postura suspendida invertida al saltar contra el borde superior | Completado |
-| **Fisica** | Cabalgar el Cursor (`Ride`) | Agarre y seguimiento directo sobre el puntero del raton | Pendiente |
+| **Fisica** | Colgado de Techo (`Upside`) | Postura suspendida invertida activada por comando | En progreso |
+| **Fisica** | Cabalgar el Cursor (`Ride`) | Postura estable de seguimiento del puntero activada por comando | En progreso |
 | **Fisica** | Reposo en Esquinas (`Corner`) | Postura de descanso en las esquinas de la pantalla | Pendiente |
 | **Escritorio** | Escaneo de Repisas de Ventanas | Enumeracion Win32 nativa (`EnumWindows`, `DwmGetWindowAttribute`) | Completado |
 | **Escritorio** | Sustraccion Z-Order 1D | Recorte geometrico restando oclusiones de ventanas superiores | Completado |
-| **Escritorio** | Posado en Repisas (`Perch`) | Seguimiento reactivo de ventanas; caida libre ante cierre/minimizacion | Completado |
+| **Escritorio** | Posado en Repisas (`Perch`) | Colision por intervalo horizontal, ciclo sentada/acostada y caida cuando desaparece el apoyo | Completado |
 | **Escritorio** | Topologia Multi-Monitor | Mapeo de espacio virtual de pantallas (`EnumDisplayMonitors`) | Completado |
-| **Escritorio** | Cruce de Fronteras de Pantalla | Transicion fluida entre monitores contiguos; rebote en bordes libres | Completado |
+| **Escritorio** | Cruce de Fronteras de Pantalla | Transicion fluida entre monitores contiguos; rebote en bordes libres | Pendiente |
 | **Render** | Overlay DirectComposition | Ventana transparente (`WS_EX_NOREDIRECTIONBITMAP`, DX12/Vulkan) | Completado |
 | **Render** | Hit-Testing de Opacidad por Pixel | Consulta de mascara alfa en RAM (`WM_NCHITTEST` < 0.01 ms, sin GPU readback) | Completado |
-| **Render** | Atlas de Sprites y Animacion | 38 tiras de animacion con seleccion de cuadros segun postura | Completado |
+| **Render** | Motor de Animacion de Sprites | Relojes locales, prioridades, transiciones, variantes espejadas, boca y mapa de posturas | Completado |
 | **Render** | Shaders WGSL Avanzados | Post-procesado (grietas en pantalla, aberracion cromatica Relic) | En progreso |
 | **Pasarela** | Servidor Tokio Loopback | Servidor WebSocket asincrono en `ws://127.0.0.1:47823` | Completado |
-| **Pasarela** | Protocolo de Entrada (Serde) | Comandos `speak`, `lip_sync`, `emotion`, `point_at`, `action` | Completado |
+| **Pasarela** | Protocolo de Entrada (Serde) | Comandos `speak`, `lip_sync`, `emotion`, `point_at`, `action` conectados a la animacion visual | Completado |
 | **Pasarela** | Telemetria de Salida (Serde) | Eventos `avatar_grabbed`, `avatar_thrown`, `avatar_impact`, `avatar_landed`, `monitor_changed` | Completado |
 | **Pasarela** | Suite de Pruebas y Mock | Script cliente de validacion (`scripts/agent_mock.js`) y pruebas unitarias | Completado |
 
@@ -282,6 +282,8 @@ cargo test
 ```powershell
 cargo run --release
 ```
+
+El objetivo de render usa 60 Hz por defecto. Define `CAPRI_TARGET_FPS=120` para solicitar la cadencia de 120 Hz en pantallas compatibles.
 
 ### Probar con el Agente Mock de Prueba:
 En otra terminal, mientras `capri-engine` esta corriendo:

@@ -1,4 +1,7 @@
-use crate::core::config::{PENDULUM_DAMPING, PENDULUM_MAX_ANGLE, PENDULUM_STIFFNESS};
+use crate::core::config::{
+    PENDULUM_DAMPING, PENDULUM_MAX_ANGLE, PENDULUM_SPEED_NORMALIZER, PENDULUM_STIFFNESS,
+    PENDULUM_TARGET_DEG_PER_PX_SEC,
+};
 use glam::Vec2;
 
 #[derive(Debug, Clone)]
@@ -29,8 +32,8 @@ impl PendulumState {
     pub fn update(&mut self, cursor_velocity: Vec2, dt: f32) {
         let dt = dt.clamp(0.001, 0.05);
 
-        let target_angle =
-            (cursor_velocity.x * 0.014).clamp(-PENDULUM_MAX_ANGLE, PENDULUM_MAX_ANGLE);
+        let target_angle = (cursor_velocity.x * PENDULUM_TARGET_DEG_PER_PX_SEC)
+            .clamp(-PENDULUM_MAX_ANGLE, PENDULUM_MAX_ANGLE);
 
         // Damped second-order spring: w' = k * (target - angle) - c * w.
         let spring_accel = (target_angle - self.angle) * PENDULUM_STIFFNESS
@@ -41,7 +44,7 @@ impl PendulumState {
         let speed = cursor_velocity.length();
         if speed > 80.0 {
             let dir = cursor_velocity.normalize();
-            let k = (speed / 2200.0).clamp(0.0, 1.0);
+            let k = (speed / PENDULUM_SPEED_NORMALIZER).clamp(0.0, 1.0);
             self.hair_lean = (-dir.x * 7.0 * k).clamp(-7.0, 7.0);
             if k > 0.35 {
                 self.smear_offset = -dir * 20.0 * k;

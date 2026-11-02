@@ -2,12 +2,14 @@ use glam::Vec2;
 use std::collections::VecDeque;
 
 use crate::core::config::{
-    MID_POINT, SPRITE_HEIGHT, SPRITE_WIDTH, THROW_MAX_SPEED, THROW_MIN_SPEED,
+    FEET_POINT, MID_POINT, POINTER_VELOCITY_WINDOW_SECS, SIT_TO_LAYDOWN_SECS, SPRITE_HEIGHT,
+    SPRITE_WIDTH, THROW_MAX_SPEED, THROW_MIN_SPEED,
 };
 use crate::core::events::EngineEvent;
 use crate::core::state::{Facing, Stance};
+use crate::core::visual::VisualTransform;
 use crate::physics::ballistics::FlightState;
-use crate::physics::collision::{ReachBounds, SquashState};
+use crate::physics::collision::{LedgeSurface, ReachBounds, SquashState};
 use crate::physics::pendulum::PendulumState;
 use crate::physics::reactions::{DazedState, SkidState};
 
@@ -22,6 +24,7 @@ pub struct PhysicsEngine {
     pub center_pos: Vec2,
     pub rotation: f32,
     pub scale: f32,
+    pub squash_scale: Vec2,
     pub facing: Facing,
 
     pub pendulum: Option<PendulumState>,
@@ -29,9 +32,12 @@ pub struct PhysicsEngine {
     pub squash: Option<SquashState>,
     pub skid: Option<SkidState>,
     pub dazed: Option<DazedState>,
+    pub seated_surface: Option<LedgeSurface>,
 
     pointer_samples: VecDeque<PointerSample>,
     last_cursor_pos: Vec2,
+    landing_surface: Option<LedgeSurface>,
+    sit_elapsed: f32,
 }
 
 impl PhysicsEngine {
@@ -41,14 +47,18 @@ impl PhysicsEngine {
             center_pos: initial_pos,
             rotation: 0.0,
             scale: 1.0,
+            squash_scale: Vec2::ONE,
             facing: Facing::Right,
             pendulum: None,
             flight: None,
             squash: None,
             skid: None,
             dazed: None,
+            seated_surface: None,
             pointer_samples: VecDeque::with_capacity(16),
             last_cursor_pos: initial_pos,
+            landing_surface: None,
+            sit_elapsed: 0.0,
         }
     }
 
@@ -58,8 +68,7 @@ impl PhysicsEngine {
         self.skid = None;
         self.dazed = None;
 
-        let top_left = self.center_pos - MID_POINT * self.scale;
-        let local_grab = (cursor_pos - top_left) / self.scale;
+        let local_grab = self.visual_transform().screen_to_local(cursor_pos) + MID_POINT;
 
         let grab_point = Vec2::new(
             local_grab.x.clamp(20.0, SPRITE_WIDTH - 20.0),
@@ -85,19 +94,38 @@ impl PhysicsEngine {
             pos: cursor_pos,
             timestamp,
         });
-        while self.pointer_samples.len() > 10 {
+        while self
+            .pointer_samples
+            .front()
+            .is_some_and(|sample| timestamp - sample.timestamp > POINTER_VELOCITY_WINDOW_SECS)
+        {
+            self.pointer_samples.pop_front();
+        }
+        while self.pointer_samples.len() > 16 {
             self.pointer_samples.pop_front();
         }
 
         let cursor_velocity = self.calculate_pointer_velocity();
 
-        if let Some(pendulum) = &mut self.pendulum {
+        let grab_point = if let Some(pendulum) = &mut self.pendulum {
             pendulum.update(cursor_velocity, dt);
             self.rotation = pendulum.angle;
-
-            // Keep the selected grab point fixed beneath the cursor.
-            let grab_offset = (pendulum.grab_point - MID_POINT) * self.scale;
+            Some(pendulum.grab_point)
+        } else {
+            None
+        };
+        if let Some(grab_point) = grab_point {
+            let grab_offset = self
+                .visual_transform()
+                .local_delta_to_screen(grab_point - MID_POINT);
             self.center_pos = cursor_pos - grab_offset;
+            if cursor_velocity.x.abs() > 25.0 {
+                self.facing = if cursor_velocity.x < 0.0 {
+                    Facing::Left
+                } else {
+                    Facing::Right
+                };
+            }
         }
 
         self.last_cursor_pos = cursor_pos;
@@ -124,6 +152,13 @@ impl PhysicsEngine {
             let flight = FlightState::new_throw(self.center_pos, velocity, feet_first);
             let speed_val = flight.velocity.length();
             self.rotation = flight.angle;
+            if velocity.x.abs() > 25.0 {
+                self.facing = if velocity.x < 0.0 {
+                    Facing::Left
+                } else {
+                    Facing::Right
+                };
+            }
             self.flight = Some(flight);
 
             EngineEvent::Thrown {
@@ -131,12 +166,34 @@ impl PhysicsEngine {
                 speed: speed_val,
             }
         } else {
-            self.stance = Stance::Stand;
+            self.stance = Stance::Fly;
             self.rotation = 0.0;
+            self.flight = Some(FlightState::new_throw(
+                self.center_pos,
+                velocity * 0.35 + Vec2::new(0.0, 1.0),
+                feet_first,
+            ));
             EngineEvent::Dropped {
                 screen_pos: self.center_pos,
             }
         }
+    }
+
+    pub fn update_ride(&mut self, cursor_pos: Vec2, cursor_velocity: Vec2, dt: f32) {
+        if self.stance != Stance::Ride {
+            return;
+        }
+        self.center_pos = cursor_pos + Vec2::new(0.0, 86.0);
+        self.rotation = (cursor_velocity.x * 0.012).clamp(-24.0, 24.0);
+        self.squash_scale = Vec2::ONE;
+        if cursor_velocity.x.abs() > 25.0 {
+            self.facing = if cursor_velocity.x < 0.0 {
+                Facing::Left
+            } else {
+                Facing::Right
+            };
+        }
+        let _ = dt;
     }
 
     pub fn step(
@@ -148,17 +205,79 @@ impl PhysicsEngine {
         screen_bottom: f32,
         ledges_y: &[f32],
     ) -> Vec<EngineEvent> {
+        let surfaces = ledges_y
+            .iter()
+            .enumerate()
+            .map(|(index, y)| LedgeSurface {
+                hwnd: index as isize,
+                left: screen_left,
+                right: screen_right,
+                y: *y,
+                window_title: None,
+            })
+            .collect::<Vec<_>>();
+        self.step_with_surfaces(
+            dt,
+            screen_left,
+            screen_top,
+            screen_right,
+            screen_bottom,
+            &surfaces,
+        )
+    }
+
+    pub fn step_with_surfaces(
+        &mut self,
+        dt: f32,
+        screen_left: f32,
+        screen_top: f32,
+        screen_right: f32,
+        screen_bottom: f32,
+        ledges: &[LedgeSurface],
+    ) -> Vec<EngineEvent> {
         let mut events = Vec::new();
 
-        if let Some(squash) = &mut self.squash
-            && squash.update().is_none()
-        {
-            self.squash = None;
+        self.squash_scale = if let Some(squash) = &mut self.squash {
+            if let Some(scale) = squash.update_dt(dt) {
+                scale
+            } else {
+                self.squash = None;
+                Vec2::ONE
+            }
+        } else {
+            Vec2::ONE
+        };
+
+        if self.stance == Stance::Sit || self.stance == Stance::LayDown {
+            let Some(surface) = self.seated_surface.as_ref() else {
+                self.begin_fall();
+                return events;
+            };
+            let Some(current) = ledges.iter().find(|ledge| ledge.hwnd == surface.hwnd) else {
+                self.seated_surface = None;
+                self.begin_fall();
+                return events;
+            };
+            self.center_pos.x = self.center_pos.x.clamp(
+                current.left + SPRITE_WIDTH * 0.2,
+                current.right - SPRITE_WIDTH * 0.2,
+            );
+            self.center_pos.y = current.y;
+            self.rotation = 0.0;
+            if self.stance == Stance::Sit {
+                self.sit_elapsed += dt;
+                if self.sit_elapsed >= SIT_TO_LAYDOWN_SECS {
+                    self.stance = Stance::LayDown;
+                    self.sit_elapsed = 0.0;
+                }
+            }
+            return events;
         }
 
         match self.stance {
             Stance::Fly => {
                 let mut should_land = None;
+                let mut impact_squash = None;
 
                 if let Some(flight) = &mut self.flight {
                     flight.update(dt);
@@ -171,7 +290,7 @@ impl PhysicsEngine {
                         flight.center.x = screen_left - reach.min_x;
                         let hard = (flight.velocity.x.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
                         flight.bounce(Vec2::new(1.0, 0.0), hard);
-                        self.squash = Some(SquashState::new(Vec2::new(1.0, 0.0), hard));
+                        impact_squash = Some((Vec2::new(1.0, 0.0), hard));
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(1.0, 0.0),
                             speed: flight.velocity.length(),
@@ -184,7 +303,7 @@ impl PhysicsEngine {
                         flight.center.x = screen_right - reach.max_x;
                         let hard = (flight.velocity.x.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
                         flight.bounce(Vec2::new(-1.0, 0.0), hard);
-                        self.squash = Some(SquashState::new(Vec2::new(-1.0, 0.0), hard));
+                        impact_squash = Some((Vec2::new(-1.0, 0.0), hard));
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(-1.0, 0.0),
                             speed: flight.velocity.length(),
@@ -197,7 +316,7 @@ impl PhysicsEngine {
                         flight.center.y = screen_top - reach.min_y;
                         let hard = (flight.velocity.y.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
                         flight.bounce(Vec2::new(0.0, 1.0), hard);
-                        self.squash = Some(SquashState::new(Vec2::new(0.0, 1.0), hard));
+                        impact_squash = Some((Vec2::new(0.0, 1.0), hard));
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(0.0, 1.0),
                             speed: flight.velocity.length(),
@@ -209,67 +328,99 @@ impl PhysicsEngine {
                     let ground_y = screen_bottom - 2.0;
                     let feet_y = flight.center.y + reach.max_y;
 
-                    let mut hit_surface_y = None;
+                    let mut hit_surface = None;
                     if flight.velocity.y > 0.0 {
-                        for &ledge_y in ledges_y {
-                            if feet_y >= ledge_y
-                                && feet_y - flight.velocity.y * dt <= ledge_y + 10.0
+                        for ledge in ledges {
+                            if ledge.contains_x(flight.center.x, SPRITE_WIDTH * 0.25)
+                                && feet_y >= ledge.y
+                                && feet_y - flight.velocity.y * dt <= ledge.y + 10.0
                             {
-                                hit_surface_y = Some(ledge_y);
+                                hit_surface = Some(ledge.clone());
                                 break;
                             }
                         }
                     }
-                    if hit_surface_y.is_none() && feet_y >= ground_y {
-                        hit_surface_y = Some(ground_y);
-                    }
+                    let target_y = hit_surface
+                        .as_ref()
+                        .map(|ledge| ledge.y)
+                        .or_else(|| (feet_y >= ground_y).then_some(ground_y));
 
-                    if let Some(target_y) = hit_surface_y {
+                    if let Some(target_y) = target_y {
                         let upright = flight.angle.rem_euclid(360.0);
                         let is_upright = upright < 35.0 || upright > 325.0;
                         let vy = flight.velocity.y;
                         let vx = flight.velocity.x;
                         let speed = flight.velocity.length();
-                        let angle = flight.angle;
-                        should_land =
-                            Some((target_y, reach.max_y, is_upright, vy, vx, speed, angle));
+                        should_land = Some((
+                            target_y,
+                            reach.max_y,
+                            is_upright,
+                            vy,
+                            vx,
+                            speed,
+                            hit_surface,
+                        ));
                     }
                 }
+                if let Some((normal, hard)) = impact_squash {
+                    self.apply_squash(normal, hard);
+                }
 
-                if let Some((target_y, reach_max_y, is_upright, vy, vx, speed, angle)) = should_land
+                if let Some((target_y, reach_max_y, is_upright, vy, vx, speed, hit_surface)) =
+                    should_land
                 {
                     self.center_pos.y = target_y - reach_max_y;
                     self.flight = None;
+                    self.apply_squash(Vec2::new(0.0, 1.0), (vy / 2400.0).clamp(0.0, 1.0));
 
                     if is_upright && vy < 1200.0 {
+                        self.center_pos.y = target_y - (FEET_POINT.y - MID_POINT.y) * self.scale;
                         self.stance = Stance::Skid;
                         self.rotation = 0.0;
                         self.skid =
                             Some(SkidState::new(Vec2::new(self.center_pos.x, target_y), vx));
+                        self.landing_surface = hit_surface.clone();
+                        let window_title = hit_surface
+                            .as_ref()
+                            .and_then(|surface| surface.window_title.clone());
                         events.push(EngineEvent::Landed {
                             surface_y: target_y,
-                            window_title: None,
+                            window_title,
                             skid: true,
                         });
                     } else {
                         self.stance = Stance::Dazed;
-                        self.rotation = if angle > 180.0 { 270.0 } else { 90.0 };
+                        self.center_pos.y = target_y;
+                        self.rotation = 0.0;
                         self.dazed = Some(DazedState::new());
+                        self.landing_surface = hit_surface.clone();
+                        let window_title = hit_surface
+                            .as_ref()
+                            .and_then(|surface| surface.window_title.clone());
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(0.0, -1.0),
                             speed,
                             point: Vec2::new(self.center_pos.x, target_y),
-                            window_title: None,
+                            window_title,
                         });
                     }
                 }
             }
             Stance::Skid => {
+                let floor_standing_offset = (FEET_POINT.y - MID_POINT.y) * self.scale;
                 if let Some(skid) = &mut self.skid {
                     let finished = skid.update(dt);
                     self.center_pos.x = skid.feet_pos.x;
                     if finished {
-                        self.stance = Stance::Stand;
+                        if let Some(surface) = self.landing_surface.take() {
+                            self.center_pos = Vec2::new(self.center_pos.x, surface.y);
+                            self.stance = Stance::Sit;
+                            self.seated_surface = Some(surface);
+                            self.sit_elapsed = 0.0;
+                        } else {
+                            self.stance = Stance::Stand;
+                            self.center_pos.y = skid.feet_pos.y - floor_standing_offset;
+                        }
                         self.skid = None;
                     }
                 }
@@ -278,9 +429,18 @@ impl PhysicsEngine {
                 if let Some(dazed) = &mut self.dazed {
                     let recovered = dazed.update(dt);
                     if recovered {
-                        self.stance = Stance::Stand;
                         self.rotation = 0.0;
                         self.dazed = None;
+                        if let Some(surface) = self.landing_surface.take() {
+                            self.center_pos.y = surface.y;
+                            self.stance = Stance::Sit;
+                            self.seated_surface = Some(surface);
+                            self.sit_elapsed = 0.0;
+                        } else {
+                            self.stance = Stance::Stand;
+                            self.seated_surface = None;
+                            self.center_pos.y = self.floor_standing_center(self.center_pos.y);
+                        }
                     }
                 }
             }
@@ -288,6 +448,45 @@ impl PhysicsEngine {
         }
 
         events
+    }
+
+    pub fn visual_transform(&self) -> VisualTransform {
+        VisualTransform::new(
+            self.center_pos,
+            self.rotation,
+            Vec2::new(
+                self.scale * self.squash_scale.x,
+                self.scale * self.squash_scale.y,
+            ),
+            self.facing,
+        )
+    }
+
+    pub fn has_landing_surface(&self) -> bool {
+        self.landing_surface.is_some()
+    }
+
+    fn begin_fall(&mut self) {
+        self.stance = Stance::Fly;
+        self.rotation = 0.0;
+        self.flight = Some(FlightState::new_throw(
+            self.center_pos,
+            Vec2::new(0.0, 1.0),
+            false,
+        ));
+        self.skid = None;
+        self.dazed = None;
+        self.landing_surface = None;
+    }
+
+    fn floor_standing_center(&self, surface_y: f32) -> f32 {
+        surface_y - (FEET_POINT.y - MID_POINT.y) * self.scale
+    }
+
+    fn apply_squash(&mut self, normal: Vec2, hard: f32) {
+        let mut squash = SquashState::new(normal, hard);
+        self.squash_scale = squash.update_dt(0.0).unwrap_or(Vec2::ONE);
+        self.squash = Some(squash);
     }
 
     fn calculate_pointer_velocity(&self) -> Vec2 {
@@ -315,5 +514,68 @@ impl PhysicsEngine {
         } else {
             vel
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slow_release_enters_fall_instead_of_hovering() {
+        let mut physics = PhysicsEngine::new(Vec2::new(100.0, 100.0));
+        physics.pick_up(Vec2::new(100.0, 100.0));
+        physics.release();
+
+        assert_eq!(physics.stance, Stance::Fly);
+        assert!(physics.flight.is_some());
+    }
+
+    #[test]
+    fn grab_point_remains_under_cursor_while_rotating() {
+        let mut physics = PhysicsEngine::new(Vec2::new(200.0, 200.0));
+        let cursor = Vec2::new(230.0, 180.0);
+        physics.pick_up(cursor);
+        physics.rotation = 25.0;
+        physics.update_held(cursor, 0.016, 0.016);
+        let grab = physics
+            .pendulum
+            .as_ref()
+            .map(|pendulum| pendulum.grab_point)
+            .expect("pendulum");
+        let rendered_grab = physics.visual_transform().apply(grab - MID_POINT);
+
+        assert!((rendered_grab - cursor).length() < 0.001);
+    }
+
+    #[test]
+    fn landing_on_visible_ledge_enters_sit_after_skid() {
+        let mut physics = PhysicsEngine::new(Vec2::new(200.0, 0.0));
+        physics.stance = Stance::Fly;
+        physics.flight = Some(FlightState::new_throw(
+            Vec2::new(200.0, 0.0),
+            Vec2::new(0.0, 500.0),
+            false,
+        ));
+        let ledge = LedgeSurface {
+            hwnd: 7,
+            left: 100.0,
+            right: 400.0,
+            y: 220.0,
+            window_title: Some("Editor".to_string()),
+        };
+
+        for _ in 0..180 {
+            physics.step_with_surfaces(1.0 / 60.0, 0.0, -500.0, 800.0, 600.0, &[ledge.clone()]);
+            if physics.stance == Stance::Sit {
+                break;
+            }
+        }
+
+        assert_eq!(physics.stance, Stance::Sit);
+        assert_eq!(
+            physics.seated_surface.as_ref().map(|surface| surface.hwnd),
+            Some(7)
+        );
     }
 }

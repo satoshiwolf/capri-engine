@@ -1,5 +1,9 @@
 use glam::Vec2;
 
+use crate::core::config::{
+    SHOCKWAVE_DECAY_PER_SEC, SHOCKWAVE_EXPANSION_PX_PER_SEC, SPARK_GRAVITY_PX_PER_SEC2,
+};
+
 #[derive(Debug, Clone)]
 pub struct Spark {
     pub pos: Vec2,
@@ -12,7 +16,7 @@ pub struct Spark {
 impl Spark {
     pub fn update(&mut self, dt: f32) -> bool {
         self.pos += self.vel * dt;
-        self.vel.y += 980.0 * dt;
+        self.vel.y += SPARK_GRAVITY_PX_PER_SEC2 * dt;
         self.life -= dt;
         self.life > 0.0
     }
@@ -37,8 +41,8 @@ impl Shockwave {
     }
 
     pub fn update(&mut self, dt: f32) -> bool {
-        self.radius += 240.0 * dt;
-        self.intensity -= 1.8 * dt;
+        self.radius += SHOCKWAVE_EXPANSION_PX_PER_SEC * dt;
+        self.intensity -= SHOCKWAVE_DECAY_PER_SEC * dt;
         self.radius < self.max_radius && self.intensity > 0.0
     }
 }
@@ -51,10 +55,18 @@ pub struct CrackSegment {
 }
 
 #[derive(Debug, Clone)]
+pub struct DizzyStars {
+    pub center: Vec2,
+    pub phase: f32,
+    pub life: f32,
+}
+
+#[derive(Debug, Clone)]
 pub struct VfxSystem {
     pub sparks: Vec<Spark>,
     pub shockwaves: Vec<Shockwave>,
     pub cracks: Vec<CrackSegment>,
+    pub dizzy: Option<DizzyStars>,
 }
 
 impl VfxSystem {
@@ -63,6 +75,7 @@ impl VfxSystem {
             sparks: Vec::with_capacity(128),
             shockwaves: Vec::with_capacity(8),
             cracks: Vec::with_capacity(32),
+            dizzy: None,
         }
     }
 
@@ -123,6 +136,14 @@ impl VfxSystem {
         }
     }
 
+    pub fn emit_dizzy(&mut self, center: Vec2) {
+        self.dizzy = Some(DizzyStars {
+            center,
+            phase: 0.0,
+            life: 2.4,
+        });
+    }
+
     pub fn update(&mut self, dt: f32) {
         self.sparks.retain_mut(|s| s.update(dt));
         self.shockwaves.retain_mut(|w| w.update(dt));
@@ -131,6 +152,13 @@ impl VfxSystem {
             c.life -= dt;
             c.life > 0.0
         });
+        if let Some(stars) = &mut self.dizzy {
+            stars.phase += 4.5 * dt;
+            stars.life -= dt;
+            if stars.life <= 0.0 {
+                self.dizzy = None;
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::core::config::{
-    AIR_RESISTANCE, LEAP_GRAVITY, SKID_DECELERATION, THROW_GRAVITY, THROW_MAX_SPEED,
+    AIR_RESISTANCE, ANIME_FRAME_SECS, LEAP_GRAVITY, RELEASE_STREAK_SECS, SKID_DECELERATION,
+    THROW_GRAVITY, THROW_MAX_SPEED, THROW_SPIN_FROM_VX, THROW_VERTICAL_BOUNCE_X_DAMP,
 };
 use glam::Vec2;
 
@@ -21,6 +22,8 @@ pub struct FlightState {
     pub angular_velocity: f32,
     /// Remaining initial release-streak frames.
     pub release_streak: u8,
+    /// Remaining initial release-streak time in seconds.
+    pub release_streak_time: f32,
     pub phase: FlightPhase,
     pub is_leap: bool,
     /// Remaining hit-stop duration in seconds.
@@ -46,7 +49,7 @@ impl FlightState {
         }
 
         // Tumbling speed follows the horizontal throw impulse.
-        let angular_velocity = (velocity.x * 0.32).clamp(-900.0, 900.0);
+        let angular_velocity = (velocity.x * THROW_SPIN_FROM_VX).clamp(-900.0, 900.0);
 
         Self {
             center,
@@ -54,6 +57,7 @@ impl FlightState {
             angle: along,
             angular_velocity,
             release_streak: 2,
+            release_streak_time: RELEASE_STREAK_SECS,
             phase: FlightPhase::Air,
             is_leap: false,
             freeze_timer: 0.0,
@@ -73,8 +77,9 @@ impl FlightState {
             return;
         }
 
-        if self.release_streak > 0 {
-            self.release_streak -= 1;
+        if self.release_streak_time > 0.0 {
+            self.release_streak_time = (self.release_streak_time - dt).max(0.0);
+            self.release_streak = (self.release_streak_time / ANIME_FRAME_SECS).ceil() as u8;
         }
 
         let dt = dt.clamp(0.001, 0.05);
@@ -116,12 +121,12 @@ impl FlightState {
         // Hold for one to four frames depending on impact hardness.
         let frames_hold = 1.0 + hard * 3.0;
         if hard > 0.12 {
-            self.freeze_timer = frames_hold * 0.016;
+            self.freeze_timer = frames_hold * ANIME_FRAME_SECS;
         }
 
         if normal.x.abs() > 0.5 {
             self.velocity.x = -self.velocity.x * crate::core::config::BOUNCE_RESTITUTION_X;
-            self.velocity.y *= 0.85;
+            self.velocity.y *= THROW_VERTICAL_BOUNCE_X_DAMP;
             self.angular_velocity =
                 -self.angular_velocity * crate::core::config::BOUNCE_ANGULAR_DAMP;
         } else if normal.y.abs() > 0.5 {
@@ -154,5 +159,18 @@ mod tests {
 
         assert!(flight.velocity.x < 0.0);
         assert!(flight.freeze_timer > 0.0);
+    }
+
+    #[test]
+    fn release_streak_uses_time_instead_of_render_ticks() {
+        let velocity = Vec2::new(1000.0, -500.0);
+        let mut at_60 = FlightState::new_throw(Vec2::new(100.0, 100.0), velocity, false);
+        let mut at_120 = FlightState::new_throw(Vec2::new(100.0, 100.0), velocity, false);
+
+        at_60.update(1.0 / 60.0);
+        at_120.update(1.0 / 120.0);
+        at_120.update(1.0 / 120.0);
+
+        assert_eq!(at_60.release_streak, at_120.release_streak);
     }
 }
