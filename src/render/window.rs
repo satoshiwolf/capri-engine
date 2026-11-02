@@ -426,13 +426,18 @@ fn create_input_hwnd() -> EngineResult<OwnedHwnd> {
     }
 }
 
+#[allow(deprecated)]
+pub fn try_create_overlay_window(_state: WindowSharedState) -> EngineResult<HWND> {
+    create_overlay_hwnd().map(OwnedHwnd::into_raw)
+}
+
 #[deprecated(
-    since = "0.2.0",
-    note = "Use `CompositionOverlay::create()`. This function will be removed in 0.4.0."
+    since = "0.3.31",
+    note = "Use `try_create_overlay_window()`. This function will be removed in 1.0.0."
 )]
 #[allow(deprecated)]
-pub fn create_overlay_window(_state: WindowSharedState) -> EngineResult<HWND> {
-    create_overlay_hwnd().map(OwnedHwnd::into_raw)
+pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
+    try_create_overlay_window(state).map_err(|error| error.to_string())
 }
 
 pub struct CompositionOverlay {
@@ -449,7 +454,7 @@ pub struct CompositionOverlay {
 }
 
 impl CompositionOverlay {
-    pub fn create() -> EngineResult<Self> {
+    pub fn try_create() -> EngineResult<Self> {
         let com = ComApartment::initialize()?;
 
         // SAFETY: DPI awareness is process-wide and must be selected before the overlay
@@ -499,8 +504,16 @@ impl CompositionOverlay {
             _com: com,
             input_visible: false,
         };
-        overlay.sync_input_capture(false)?;
+        overlay.try_sync_input_capture(false)?;
         Ok(overlay)
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_create()`. This method will be removed in 1.0.0."
+    )]
+    pub fn create() -> Result<Self, String> {
+        Self::try_create().map_err(|error| error.to_string())
     }
 
     pub fn hwnd(&self) -> HWND {
@@ -523,7 +536,7 @@ impl CompositionOverlay {
         self.size
     }
 
-    pub fn commit(&self) -> EngineResult<()> {
+    pub fn try_commit(&self) -> EngineResult<()> {
         // SAFETY: The DirectComposition device is owned by this overlay and remains
         // valid for the lifetime of all visuals attached to it.
         unsafe {
@@ -533,7 +546,15 @@ impl CompositionOverlay {
         }
     }
 
-    pub fn poll_cursor(&self) -> EngineResult<(i32, i32)> {
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_commit()`. This method will be removed in 1.0.0."
+    )]
+    pub fn commit(&self) -> Result<(), String> {
+        self.try_commit().map_err(|error| error.to_string())
+    }
+
+    pub fn try_poll_cursor(&self) -> EngineResult<(i32, i32)> {
         let mut point = POINT::default();
         // SAFETY: `point` is a valid writable POINT for the duration of the call.
         unsafe {
@@ -544,7 +565,15 @@ impl CompositionOverlay {
         Ok((point.x, point.y))
     }
 
-    pub fn sync_input_capture(&mut self, capture: bool) -> EngineResult<()> {
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_poll_cursor()`. This method will be removed in 1.0.0."
+    )]
+    pub fn poll_cursor(&self) -> Result<(i32, i32), String> {
+        self.try_poll_cursor().map_err(|error| error.to_string())
+    }
+
+    pub fn try_sync_input_capture(&mut self, capture: bool) -> EngineResult<()> {
         if capture {
             if self.input.mouse_down() {
                 return Ok(());
@@ -583,14 +612,24 @@ impl CompositionOverlay {
     }
 
     #[deprecated(
-        since = "0.2.1",
-        note = "Use `sync_input_capture()` to coordinate the dedicated input window. This method will be removed in 0.4.0."
+        since = "0.3.31",
+        note = "Use `try_sync_input_capture()`. This method will be removed in 1.0.0."
     )]
-    pub fn set_click_through(&mut self, click_through: bool) -> EngineResult<()> {
+    pub fn sync_input_capture(&mut self, capture: bool) -> Result<(), String> {
+        self.try_sync_input_capture(capture)
+            .map_err(|error| error.to_string())
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_sync_input_capture()` to coordinate the dedicated input window. This method will be removed in 1.0.0."
+    )]
+    #[allow(deprecated)]
+    pub fn set_click_through(&mut self, click_through: bool) -> Result<(), String> {
         self.sync_input_capture(!click_through)
     }
 
-    pub fn create_surface(
+    pub fn try_create_surface(
         &self,
         instance: &wgpu::Instance,
     ) -> EngineResult<wgpu::Surface<'static>> {
@@ -602,6 +641,18 @@ impl CompositionOverlay {
             ))
         }
         .map_err(|error| EngineError::gpu("create composition surface", error.to_string()))
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_create_surface()`. This method will be removed in 1.0.0."
+    )]
+    pub fn create_surface(
+        &self,
+        instance: &wgpu::Instance,
+    ) -> Result<wgpu::Surface<'static>, String> {
+        self.try_create_surface(instance)
+            .map_err(|error| error.to_string())
     }
 }
 

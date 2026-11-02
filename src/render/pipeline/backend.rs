@@ -35,11 +35,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(overlay: &CompositionOverlay) -> EngineResult<Self> {
+    pub async fn try_new(overlay: &CompositionOverlay) -> EngineResult<Self> {
         let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         instance_descriptor.backends = wgpu::Backends::DX12;
         let instance = wgpu::Instance::new(instance_descriptor);
-        let surface = overlay.create_surface(&instance)?;
+        let surface = overlay.try_create_surface(&instance)?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -99,7 +99,7 @@ impl Renderer {
             view_formats: vec![],
         };
         surface.configure(&device, &config);
-        overlay.commit()?;
+        overlay.try_commit()?;
 
         let sprite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Capri Sprite Shader"),
@@ -267,7 +267,17 @@ impl Renderer {
         })
     }
 
-    pub fn render_animation(
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_new()`. This method will be removed in 1.0.0."
+    )]
+    pub async fn new(overlay: &CompositionOverlay) -> Result<Self, String> {
+        Self::try_new(overlay)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn try_render_animation(
         &mut self,
         body: SpriteInstance<'_>,
         mouth: Option<SpriteInstance<'_>>,
@@ -370,7 +380,21 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> EngineResult<()> {
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_render_animation()`. This method will be removed in 1.0.0."
+    )]
+    pub fn render_animation(
+        &mut self,
+        body: SpriteInstance<'_>,
+        mouth: Option<SpriteInstance<'_>>,
+        vfx: &VfxSystem,
+    ) -> Result<(), String> {
+        self.try_render_animation(body, mouth, vfx)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn try_render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> EngineResult<()> {
         let facing = if sprite.facing < 0.0 {
             Facing::Left
         } else {
@@ -387,7 +411,16 @@ impl Renderer {
             ),
             MID_POINT,
         );
-        self.render_animation(instance, None, vfx)
+        self.try_render_animation(instance, None, vfx)
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_render()`. This method will be removed in 1.0.0."
+    )]
+    pub fn render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> Result<(), String> {
+        self.try_render(sprite, vfx)
+            .map_err(|error| error.to_string())
     }
 
     fn reconfigure(&self) -> EngineResult<()> {

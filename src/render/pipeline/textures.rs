@@ -13,9 +13,18 @@ pub(super) struct GpuSprite {
 }
 
 impl Renderer {
-    pub fn prepare_strip(&mut self, strip: &SpriteStrip) -> EngineResult<()> {
+    pub fn try_prepare_strip(&mut self, strip: &SpriteStrip) -> EngineResult<()> {
         let _ = self.sprite_bind_group(strip)?;
         Ok(())
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_prepare_strip()`. This method will be removed in 1.0.0."
+    )]
+    pub fn prepare_strip(&mut self, strip: &SpriteStrip) -> Result<(), String> {
+        self.try_prepare_strip(strip)
+            .map_err(|error| error.to_string())
     }
 
     pub fn retain_sprites(&mut self, names: &HashSet<String>) {

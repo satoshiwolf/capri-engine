@@ -133,7 +133,7 @@ impl WsGatewayServer {
         }
     }
 
-    pub async fn run(self) -> EngineResult<()> {
+    pub async fn try_run(self) -> EngineResult<()> {
         let addr: SocketAddr = format!("127.0.0.1:{}", self.port)
             .parse::<SocketAddr>()
             .map_err(|error| EngineError::gateway("parse gateway address", error.to_string()))?;
@@ -149,6 +149,14 @@ impl WsGatewayServer {
         })?;
         println!("[GATEWAY] Servidor WebSocket activo en ws://{}", local_addr);
         self.serve(listener).await
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_run()`. This method will be removed in 1.0.0."
+    )]
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.try_run().await.map_err(|error| Box::new(error) as _)
     }
 
     async fn serve(self, listener: TcpListener) -> EngineResult<()> {

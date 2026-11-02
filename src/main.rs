@@ -112,7 +112,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.32 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.33 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -122,14 +122,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let server =
             WsGatewayServer::with_bounded_channel(DEFAULT_WS_PORT, cmd_tx, server_event_tx);
-        if let Err(error) = server.run().await {
+        if let Err(error) = server.try_run().await {
             eprintln!("[GATEWAY ERROR] Error en servidor WebSocket: {error}");
         }
     });
 
     let mut sprite_manager = SpriteManager::with_assets_dir("assets/sprites");
-    sprite_manager.load_blocking(ClipId::Idle, false)?;
-    sprite_manager.load_blocking(ClipId::Arrive, false)?;
+    sprite_manager.try_load_blocking(ClipId::Idle, false)?;
+    sprite_manager.try_load_blocking(ClipId::Arrive, false)?;
     println!("[ASSETS] Catalogo de animacion inicializado.");
 
     let monitors = enumerate_monitors();
@@ -148,13 +148,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|fps| *fps == 60 || *fps == 120)
         .unwrap_or(DEFAULT_RENDER_HZ);
 
-    let mut overlay = CompositionOverlay::create()?;
+    let mut overlay = CompositionOverlay::try_create()?;
     let hwnd = overlay.hwnd();
     println!(
         "[WINDOW] Ventana overlay transparente creada (HWND: {:?})",
         hwnd
     );
-    let mut renderer = Renderer::new(&overlay).await?;
+    let mut renderer = Renderer::try_new(&overlay).await?;
 
     let physics_worker = PhysicsWorker::spawn(
         initial_pos,
@@ -210,7 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("[PHYSICS] No se pudieron actualizar las superficies");
         }
 
-        let (cursor_x, cursor_y) = overlay.poll_cursor()?;
+        let (cursor_x, cursor_y) = overlay.try_poll_cursor()?;
         let cursor_screen = Vec2::new(cursor_x as f32, cursor_y as f32);
         let cursor_motion = (cursor_screen - last_cursor) / dt;
         last_cursor = cursor_screen;
@@ -246,7 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let is_over_capri = overlay.input().hit_test(cursor_screen);
         let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance());
         overlay.input().set_capture_input(capture_input);
-        overlay.sync_input_capture(capture_input)?;
+        overlay.try_sync_input_capture(capture_input)?;
 
         if mouse_down && !was_mouse_down && is_over_capri {
             if !physics_worker.pick_up(cursor_screen) {
@@ -470,7 +470,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
             });
 
-            renderer.render_animation(body, mouth, &vfx)?;
+            renderer.try_render_animation(body, mouth, &vfx)?;
         }
 
         last_body = RenderedBody {
@@ -522,7 +522,7 @@ fn prepare_loaded_strip(
     if let Some(strip) = manager.get_mut(clip, flipped)
         && !strip.rgba_frames.is_empty()
     {
-        renderer.prepare_strip(strip)?;
+        renderer.try_prepare_strip(strip)?;
         strip.release_rgba_frames();
     }
     Ok(())

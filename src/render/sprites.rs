@@ -20,7 +20,7 @@ pub struct SpriteStrip {
 }
 
 impl SpriteStrip {
-    pub fn load_from_file<P: AsRef<Path>>(
+    pub fn try_load_from_file<P: AsRef<Path>>(
         path: P,
         name: &str,
         frame_width: u32,
@@ -81,7 +81,25 @@ impl SpriteStrip {
         })
     }
 
-    pub fn from_spec(path: &Path, spec: &crate::render::animation::ClipSpec) -> EngineResult<Self> {
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_load_from_file()`. This method will be removed in 1.0.0."
+    )]
+    pub fn load_from_file<P: AsRef<Path>>(
+        path: P,
+        name: &str,
+        frame_width: u32,
+        frame_height: u32,
+        fps: f32,
+    ) -> Result<Self, String> {
+        Self::try_load_from_file(path, name, frame_width, frame_height, fps)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn try_from_spec(
+        path: &Path,
+        spec: &crate::render::animation::ClipSpec,
+    ) -> EngineResult<Self> {
         let asset_name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -91,13 +109,24 @@ impl SpriteStrip {
                     format!("sprite path {:?} has no UTF-8 filename", path),
                 )
             })?;
-        Self::load_from_file(
+        Self::try_load_from_file(
             path,
             asset_name,
             spec.frame_width,
             spec.frame_height,
             spec.fps,
         )
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_from_spec()`. This method will be removed in 1.0.0."
+    )]
+    pub fn from_spec(
+        path: &Path,
+        spec: &crate::render::animation::ClipSpec,
+    ) -> Result<Self, String> {
+        Self::try_from_spec(path, spec).map_err(|error| error.to_string())
     }
 
     pub fn frame_index_at(&self, time_secs: f64) -> usize {
@@ -184,7 +213,7 @@ impl SpriteManager {
 
         thread::spawn(move || {
             while let Ok(request) = request_rx.recv() {
-                let result = SpriteStrip::from_spec(&request.path, &request.spec);
+                let result = SpriteStrip::try_from_spec(&request.path, &request.spec);
                 let _ = response_tx.send(LoadResponse {
                     key: request.key,
                     result,
@@ -243,7 +272,7 @@ impl SpriteManager {
         loaded_names
     }
 
-    pub fn load_blocking(&mut self, clip: ClipId, prefer_flipped: bool) -> EngineResult<()> {
+    pub fn try_load_blocking(&mut self, clip: ClipId, prefer_flipped: bool) -> EngineResult<()> {
         let spec = ClipCatalog::spec(clip);
         let flipped = prefer_flipped && spec.flipped_filename.is_some();
         let key = SpriteAssetKey { clip, flipped };
@@ -251,9 +280,18 @@ impl SpriteManager {
         if self.strips.contains_key(name) {
             return Ok(());
         }
-        let strip = SpriteStrip::from_spec(&self.base_dir.join(name), &spec)?;
+        let strip = SpriteStrip::try_from_spec(&self.base_dir.join(name), &spec)?;
         self.strips.insert(name.to_string(), strip);
         Ok(())
+    }
+
+    #[deprecated(
+        since = "0.3.31",
+        note = "Use `try_load_blocking()`. This method will be removed in 1.0.0."
+    )]
+    pub fn load_blocking(&mut self, clip: ClipId, prefer_flipped: bool) -> Result<(), String> {
+        self.try_load_blocking(clip, prefer_flipped)
+            .map_err(|error| error.to_string())
     }
 
     pub fn get(&mut self, clip: ClipId, prefer_flipped: bool) -> Option<&SpriteStrip> {
@@ -303,7 +341,7 @@ impl SpriteManager {
             ClipId::Mouth,
         ] {
             let spec = ClipCatalog::spec(id);
-            match SpriteStrip::from_spec(&self.base_dir.join(spec.filename), &spec) {
+            match SpriteStrip::try_from_spec(&self.base_dir.join(spec.filename), &spec) {
                 Ok(strip) => {
                     self.strips.insert(strip.name.clone(), strip);
                 }
@@ -409,7 +447,7 @@ mod tests {
             pivot: glam::Vec2::ZERO,
             display_scale: 1.0,
         };
-        let result = SpriteStrip::from_spec(Path::new("assets/sprites/idle.png"), &spec);
+        let result = SpriteStrip::try_from_spec(Path::new("assets/sprites/idle.png"), &spec);
         assert!(result.is_err());
     }
 
