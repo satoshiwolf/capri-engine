@@ -349,12 +349,13 @@ impl PhysicsEngine {
 
                     if flight.center.x + reach.min_x < screen_left && flight.velocity.x < 0.0 {
                         flight.center.x = screen_left - reach.min_x;
+                        let impact_speed = flight.velocity.length();
                         let hard = (flight.velocity.x.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
                         flight.bounce(Vec2::new(1.0, 0.0), hard);
                         impact_squash = Some((Vec2::new(1.0, 0.0), hard));
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(1.0, 0.0),
-                            speed: flight.velocity.length(),
+                            speed: impact_speed,
                             point: Vec2::new(screen_left, flight.center.y),
                             window_title: None,
                         });
@@ -362,12 +363,13 @@ impl PhysicsEngine {
                         && flight.velocity.x > 0.0
                     {
                         flight.center.x = screen_right - reach.max_x;
+                        let impact_speed = flight.velocity.length();
                         let hard = (flight.velocity.x.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
                         flight.bounce(Vec2::new(-1.0, 0.0), hard);
                         impact_squash = Some((Vec2::new(-1.0, 0.0), hard));
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(-1.0, 0.0),
-                            speed: flight.velocity.length(),
+                            speed: impact_speed,
                             point: Vec2::new(screen_right, flight.center.y),
                             window_title: None,
                         });
@@ -375,12 +377,13 @@ impl PhysicsEngine {
 
                     if flight.center.y + reach.min_y < screen_top && flight.velocity.y < 0.0 {
                         flight.center.y = screen_top - reach.min_y;
+                        let impact_speed = flight.velocity.length();
                         let hard = (flight.velocity.y.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
                         flight.bounce(Vec2::new(0.0, 1.0), hard);
                         impact_squash = Some((Vec2::new(0.0, 1.0), hard));
                         events.push(EngineEvent::Impact {
                             normal: Vec2::new(0.0, 1.0),
-                            speed: flight.velocity.length(),
+                            speed: impact_speed,
                             point: Vec2::new(flight.center.x, screen_top),
                             window_title: None,
                         });
@@ -703,5 +706,32 @@ mod tests {
             600.0 - (FEET_POINT.y - MID_POINT.y) * physics.scale
         );
         assert!(physics.seated_surface.is_none());
+    }
+
+    #[test]
+    fn wall_impact_reports_pre_bounce_speed() {
+        let mut physics = PhysicsEngine::new(Vec2::new(0.0, 100.0));
+        physics.stance = Stance::Fly;
+        physics.flight = Some(FlightState::new_throw(
+            Vec2::new(0.0, 100.0),
+            Vec2::new(-1000.0, 0.0),
+            false,
+        ));
+
+        let events = physics.step_with_surfaces(1.0 / 60.0, 0.0, -500.0, 800.0, 600.0, &[]);
+        let reported_speed = events
+            .iter()
+            .find_map(|event| match event {
+                EngineEvent::Impact { speed, .. } => Some(*speed),
+                _ => None,
+            })
+            .expect("wall impact event");
+        let rebound_speed = physics
+            .flight
+            .as_ref()
+            .map(|flight| flight.velocity.length())
+            .expect("flight state");
+
+        assert!(reported_speed > rebound_speed);
     }
 }
