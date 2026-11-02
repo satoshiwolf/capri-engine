@@ -43,7 +43,7 @@ struct RenderedBody {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.1 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.3.2 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::unbounded_channel::<IncomingCommand>();
