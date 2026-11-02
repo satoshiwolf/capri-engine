@@ -16,6 +16,7 @@ agents.md
 !.env.example
 *.log
 *.tmp
+/reports/
 
 # Operating-system metadata
 .DS_Store
