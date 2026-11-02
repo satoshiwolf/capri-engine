@@ -15,7 +15,7 @@ use capri_engine::core::events::EngineEvent;
 use capri_engine::core::state::{Emotion, Facing, Stance};
 use capri_engine::core::visual::VisualTransform;
 use capri_engine::desktop::ledges::{Ledge, scan_ledges};
-use capri_engine::desktop::monitors::{enumerate_monitors, virtual_desktop_bounds};
+use capri_engine::desktop::monitors::{MonitorInfo, enumerate_monitors, virtual_desktop_bounds};
 use capri_engine::gateway::WsGatewayServer;
 use capri_engine::gateway::protocol::{IncomingCommand, OutgoingEvent};
 use capri_engine::physics::PhysicsEngine;
@@ -107,7 +107,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.10 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.11 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -266,6 +266,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         action, target
                     );
                     match action.as_str() {
+                        "perch_on_window" => {
+                            if let Some(surface) =
+                                find_target_surface(target.as_deref(), &surfaces).cloned()
+                                && !physics.perch_on(surface)
+                            {
+                                eprintln!("[GATEWAY COMMAND] Target ledge is too narrow");
+                            }
+                        }
                         "hang_on_ceiling" => {
                             physics.hang_on_ceiling(vy as f32);
                         }
@@ -306,7 +314,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "[GATEWAY COMMAND] Señalar pantalla {} en ({}, {})",
                         screen, x, y
                     );
-                    physics.face_toward(x);
+                    let target = resolve_point_at(screen, x, y, &monitors);
+                    physics.face_toward(target.x);
                 }
             }
         }
@@ -580,6 +589,40 @@ fn ledge_surfaces(ledges: &[Ledge]) -> Vec<LedgeSurface> {
         .collect()
 }
 
+fn find_target_surface<'a>(
+    target: Option<&str>,
+    surfaces: &'a [LedgeSurface],
+) -> Option<&'a LedgeSurface> {
+    let Some(target) = target.map(str::trim).filter(|value| !value.is_empty()) else {
+        return surfaces.first();
+    };
+    if let Ok(hwnd) = target.parse::<isize>()
+        && let Some(surface) = surfaces.iter().find(|surface| surface.hwnd == hwnd)
+    {
+        return Some(surface);
+    }
+    surfaces.iter().find(|surface| {
+        surface
+            .window_title
+            .as_deref()
+            .is_some_and(|title| title.eq_ignore_ascii_case(target))
+    })
+}
+
+fn resolve_point_at(screen: usize, x: f32, y: f32, monitors: &[MonitorInfo]) -> Vec2 {
+    let Some(monitor) = monitors.get(screen) else {
+        return Vec2::new(x, y);
+    };
+    let (left, top, right, bottom) = monitor.bounds;
+    let global = Vec2::new(x, y);
+    if monitor.contains_point(global) {
+        return global;
+    }
+    let local = Vec2::new(left as f32 + x, top as f32 + y);
+    let is_local = x >= 0.0 && y >= 0.0 && x < (right - left) as f32 && y < (bottom - top) as f32;
+    if is_local { local } else { global }
+}
+
 fn send_physics_telemetry(
     event_tx: &broadcast::Sender<OutgoingEvent>,
     event: &EngineEvent,
@@ -653,5 +696,60 @@ mod tests {
         let stopped_at = scans.load(Ordering::Acquire);
         thread::sleep(Duration::from_millis(20));
         assert_eq!(scans.load(Ordering::Acquire), stopped_at);
+    }
+
+    fn surface(hwnd: isize, title: &str, left: f32, right: f32) -> LedgeSurface {
+        LedgeSurface {
+            hwnd,
+            left,
+            right,
+            y: 200.0,
+            window_title: Some(title.to_string()),
+        }
+    }
+
+    #[test]
+    fn action_target_resolves_hwnd_title_and_default() {
+        let surfaces = [
+            surface(11, "Editor", 0.0, 300.0),
+            surface(22, "Browser", 300.0, 600.0),
+        ];
+
+        assert_eq!(
+            find_target_surface(None, &surfaces).map(|value| value.hwnd),
+            Some(11)
+        );
+        assert_eq!(
+            find_target_surface(Some("22"), &surfaces).map(|value| value.hwnd),
+            Some(22)
+        );
+        assert_eq!(
+            find_target_surface(Some("browser"), &surfaces).map(|value| value.hwnd),
+            Some(22)
+        );
+        assert!(find_target_surface(Some("missing"), &surfaces).is_none());
+    }
+
+    #[test]
+    fn point_at_accepts_global_or_monitor_local_coordinates() {
+        let monitors = [MonitorInfo {
+            name: "test".to_string(),
+            bounds: (100, 50, 900, 650),
+            work_area: (100, 50, 900, 650),
+            is_primary: true,
+        }];
+
+        assert_eq!(
+            resolve_point_at(0, 400.0, 300.0, &monitors),
+            Vec2::new(400.0, 300.0)
+        );
+        assert_eq!(
+            resolve_point_at(0, 50.0, 40.0, &monitors),
+            Vec2::new(150.0, 90.0)
+        );
+        assert_eq!(
+            resolve_point_at(4, 50.0, 40.0, &monitors),
+            Vec2::new(50.0, 40.0)
+        );
     }
 }

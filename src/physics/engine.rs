@@ -331,6 +331,21 @@ impl PhysicsEngine {
         self.sit_elapsed = 0.0;
     }
 
+    pub fn perch_on(&mut self, surface: LedgeSurface) -> bool {
+        let Some((min_x, max_x)) = surface.standing_limits(SPRITE_WIDTH) else {
+            return false;
+        };
+
+        let center_x = self.center_pos.x.clamp(min_x, max_x);
+        self.clear_motion_state();
+        self.stance = Stance::Sit;
+        self.center_pos = Vec2::new(center_x, surface.y);
+        self.rotation = 0.0;
+        self.seated_surface = Some(surface);
+        self.sit_elapsed = 0.0;
+        true
+    }
+
     pub fn wake(&mut self) {
         let support = self
             .seated_surface
@@ -824,6 +839,27 @@ mod tests {
             600.0 - (FEET_POINT.y - MID_POINT.y) * physics.scale
         );
         assert!(physics.seated_surface.is_none());
+    }
+
+    #[test]
+    fn perch_command_rejects_unsupported_spans() {
+        let mut physics = PhysicsEngine::new(Vec2::new(200.0, 100.0));
+        let wide = LedgeSurface {
+            hwnd: 7,
+            left: 100.0,
+            right: 400.0,
+            y: 220.0,
+            window_title: Some("Editor".to_string()),
+        };
+        let narrow = LedgeSurface {
+            right: 140.0,
+            ..wide.clone()
+        };
+
+        assert!(!physics.perch_on(narrow));
+        assert_eq!(physics.stance, Stance::Stand);
+        assert!(physics.perch_on(wide));
+        assert_eq!(physics.stance, Stance::Sit);
     }
 
     #[test]
