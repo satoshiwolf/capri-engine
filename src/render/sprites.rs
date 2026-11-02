@@ -111,7 +111,7 @@ impl SpriteStrip {
     }
 
     pub fn mask_bytes(&self) -> usize {
-        self.masks.iter().map(|mask| mask.alpha_data.len()).sum()
+        self.masks.iter().map(|mask| mask.alpha_data().len()).sum()
     }
 
     pub fn decoded_bytes(&self) -> usize {
@@ -148,6 +148,10 @@ struct LoadResponse {
 }
 
 pub struct SpriteManager {
+    #[deprecated(
+        since = "0.3.28",
+        note = "Use `strips()` for immutable access or the manager methods. This field will be removed in 0.4.0."
+    )]
     pub strips: HashMap<String, SpriteStrip>,
     base_dir: PathBuf,
     request_tx: Option<Sender<LoadRequest>>,
@@ -157,6 +161,7 @@ pub struct SpriteManager {
     usage_tick: u64,
 }
 
+#[allow(deprecated)]
 impl SpriteManager {
     pub fn new() -> Self {
         Self::with_assets_dir("assets/sprites")
@@ -271,6 +276,10 @@ impl SpriteManager {
 
     pub fn get_strip(&self, name: &str) -> Option<&SpriteStrip> {
         self.strips.get(name)
+    }
+
+    pub fn strips(&self) -> &HashMap<String, SpriteStrip> {
+        &self.strips
     }
 
     pub fn load_essential_sprites<P: AsRef<Path>>(&mut self, base_dir: P) {
@@ -400,6 +409,12 @@ mod tests {
             flipped: true,
         };
         assert_eq!(key.name(), "perch_talk_flipped.png");
+    }
+
+    #[test]
+    fn manager_exposes_immutable_sprite_catalog() {
+        let manager = SpriteManager::with_assets_dir("assets/sprites");
+        assert!(manager.strips().is_empty());
     }
 
     #[test]

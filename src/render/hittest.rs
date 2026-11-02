@@ -7,9 +7,14 @@ use glam::Vec2;
 pub struct AlphaBitmask {
     pub width: u32,
     pub height: u32,
+    #[deprecated(
+        since = "0.3.28",
+        note = "Use `alpha_data()` for immutable access. This field will be removed in 0.4.0."
+    )]
     pub alpha_data: Vec<u8>,
 }
 
+#[allow(deprecated)]
 impl AlphaBitmask {
     pub fn new(width: u32, height: u32, mut alpha_data: Vec<u8>) -> Self {
         alpha_data.resize(width as usize * height as usize, 0);
@@ -18,6 +23,10 @@ impl AlphaBitmask {
             height,
             alpha_data,
         }
+    }
+
+    pub fn alpha_data(&self) -> &[u8] {
+        &self.alpha_data
     }
 
     /// Alpha values above 10 count as solid.
@@ -86,6 +95,7 @@ mod tests {
     #[test]
     fn malformed_mask_data_is_padded_without_panicking() {
         let mask = AlphaBitmask::new(2, 2, vec![255]);
+        assert_eq!(mask.alpha_data(), &[255, 0, 0, 0]);
         assert!(mask.is_solid(0, 0));
         assert!(!mask.is_solid(1, 1));
         assert!(!mask.is_solid(10, 10));
