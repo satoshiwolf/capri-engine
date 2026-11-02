@@ -166,18 +166,18 @@ pub fn should_capture_input(is_over_sprite: bool, mouse_down: bool, stance: Stan
 
 static GLOBAL_INPUT: LazyLock<ArcSwapOption<OverlayInput>> = LazyLock::new(ArcSwapOption::empty);
 
-struct OwnedHwnd(HWND);
+pub struct OwnedHwnd(HWND);
 
 impl OwnedHwnd {
     fn new(hwnd: HWND) -> Self {
         Self(hwnd)
     }
 
-    fn raw(&self) -> HWND {
+    pub fn raw(&self) -> HWND {
         self.0
     }
 
-    fn into_raw(mut self) -> HWND {
+    pub fn into_raw(mut self) -> HWND {
         let hwnd = self.0;
         self.0 = HWND(std::ptr::null_mut());
         hwnd
@@ -416,13 +416,22 @@ fn create_input_hwnd() -> EngineResult<OwnedHwnd> {
 }
 
 #[allow(deprecated)]
-pub fn try_create_overlay_window(_state: WindowSharedState) -> EngineResult<HWND> {
-    create_overlay_hwnd().map(OwnedHwnd::into_raw)
+pub fn try_create_overlay_owner(_state: WindowSharedState) -> EngineResult<OwnedHwnd> {
+    create_overlay_hwnd()
+}
+
+#[deprecated(
+    since = "0.3.43",
+    note = "Use `try_create_overlay_owner()` to retain RAII ownership. This function will be removed in 1.0.0."
+)]
+#[allow(deprecated)]
+pub fn try_create_overlay_window(state: WindowSharedState) -> EngineResult<HWND> {
+    try_create_overlay_owner(state).map(OwnedHwnd::into_raw)
 }
 
 #[deprecated(
     since = "0.3.31",
-    note = "Use `try_create_overlay_window()`. This function will be removed in 1.0.0."
+    note = "Use `try_create_overlay_owner()`. This function will be removed in 1.0.0."
 )]
 #[allow(deprecated)]
 pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {

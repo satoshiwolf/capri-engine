@@ -15,6 +15,7 @@ pub use sprites::{SpriteManager, SpriteStrip};
 pub use vfx::VfxSystem;
 #[allow(deprecated)]
 pub use window::{
-    CompositionOverlay, IS_RUNNING, OverlayInput, WindowSharedState, create_overlay_window,
-    pump_messages, should_capture_input, wait_for_messages,
+    CompositionOverlay, IS_RUNNING, OverlayInput, OwnedHwnd, WindowSharedState,
+    create_overlay_window, pump_messages, should_capture_input, try_create_overlay_owner,
+    wait_for_messages,
 };
