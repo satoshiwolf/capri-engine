@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use glam::Vec2;
 
+use crate::core::error::{EngineError, EngineResult};
 use crate::core::events::EngineEvent;
 use crate::core::state::{Facing, Stance};
 use crate::core::visual::VisualTransform;
@@ -148,7 +149,41 @@ pub struct PhysicsWorker {
 }
 
 impl PhysicsWorker {
+    pub fn try_spawn(
+        initial_pos: Vec2,
+        screen_bounds: (f32, f32, f32, f32),
+        tick_hz: u32,
+    ) -> EngineResult<Self> {
+        if !matches!(tick_hz, 60 | 120) {
+            return Err(EngineError::physics(
+                "spawn physics worker",
+                format!("unsupported tick rate {tick_hz}; expected 60 or 120 Hz"),
+            ));
+        }
+        Ok(Self::spawn_validated(initial_pos, screen_bounds, tick_hz))
+    }
+
+    #[deprecated(
+        since = "0.3.35",
+        note = "Use `try_spawn()` so unsupported tick rates are rejected. This method will be removed in 0.4.0."
+    )]
     pub fn spawn(initial_pos: Vec2, screen_bounds: (f32, f32, f32, f32), tick_hz: u32) -> Self {
+        Self::spawn_validated(
+            initial_pos,
+            screen_bounds,
+            if matches!(tick_hz, 60 | 120) {
+                tick_hz
+            } else {
+                60
+            },
+        )
+    }
+
+    fn spawn_validated(
+        initial_pos: Vec2,
+        screen_bounds: (f32, f32, f32, f32),
+        tick_hz: u32,
+    ) -> Self {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (output_tx, output_rx) = mpsc::sync_channel(OUTPUT_CAPACITY);
         let worker = thread::spawn(move || {
@@ -443,6 +478,14 @@ mod tests {
     }
 
     #[test]
+    fn worker_rejects_unsupported_tick_rates() {
+        for tick_hz in [0, 1, 90, 1_000_000_001] {
+            let result = PhysicsWorker::try_spawn(Vec2::ZERO, (0.0, 0.0, 800.0, 600.0), tick_hz);
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
     fn fixed_clock_carries_steps_after_a_stall() {
         let start = Instant::now();
         let mut clock = FixedStepClock::new(60, start);
@@ -455,7 +498,9 @@ mod tests {
 
     #[test]
     fn worker_applies_commands_and_emits_snapshots() {
-        let worker = PhysicsWorker::spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 120);
+        let worker =
+            PhysicsWorker::try_spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 120)
+                .expect("spawn worker");
         assert!(worker.pick_up(Vec2::new(200.0, 200.0)));
 
         let mut saw_grabbed = false;
@@ -477,7 +522,9 @@ mod tests {
 
     #[test]
     fn rapid_pickup_and_release_do_not_leave_worker_held() {
-        let worker = PhysicsWorker::spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 60);
+        let worker =
+            PhysicsWorker::try_spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 60)
+                .expect("spawn worker");
         assert!(worker.pick_up(Vec2::new(200.0, 200.0)));
         assert!(worker.release());
 
@@ -495,7 +542,9 @@ mod tests {
 
     #[test]
     fn worker_sleep_survives_multiple_ticks_and_shuts_down() {
-        let worker = PhysicsWorker::spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 60);
+        let worker =
+            PhysicsWorker::try_spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 60)
+                .expect("spawn worker");
         assert!(worker.sleep());
 
         let deadline = Instant::now() + Duration::from_secs(1);

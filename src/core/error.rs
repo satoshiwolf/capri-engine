@@ -10,6 +10,7 @@ pub enum ErrorCategory {
     Gateway,
     Gpu,
     Io,
+    Physics,
     Protocol,
     Window,
     Other,
@@ -59,6 +60,10 @@ impl EngineError {
 
     pub fn protocol(operation: &'static str, message: impl Into<String>) -> Self {
         Self::new(ErrorCategory::Protocol, operation, message)
+    }
+
+    pub fn physics(operation: &'static str, message: impl Into<String>) -> Self {
+        Self::new(ErrorCategory::Physics, operation, message)
     }
 
     pub fn window(operation: &'static str, message: impl Into<String>) -> Self {

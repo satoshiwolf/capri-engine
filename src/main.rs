@@ -153,7 +153,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.37 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.38 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -197,11 +197,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut renderer = Renderer::try_new(&overlay).await?;
 
-    let physics_worker = PhysicsWorker::spawn(
+    let physics_worker = PhysicsWorker::try_spawn(
         initial_pos,
         (vx as f32, vy as f32, vr as f32, vb as f32),
         target_fps,
-    );
+    )?;
     let mut physics = PhysicsSnapshot::initial(initial_pos);
     let mut animation = AnimationController::new();
     animation.play_action(AnimationAction::Arrive);
