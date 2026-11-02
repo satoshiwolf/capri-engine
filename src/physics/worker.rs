@@ -123,16 +123,14 @@ pub struct PhysicsOutput {
 enum PhysicsCommand {
     SetSurfaces(Vec<LedgeSurface>),
     PickUp(Vec2),
-    UpdateHeld {
+    SetHeldCursor {
         cursor_pos: Vec2,
         timestamp: f64,
-        dt: f32,
     },
     Release,
-    UpdateRide {
+    SetRideInput {
         cursor_pos: Vec2,
         cursor_velocity: Vec2,
-        dt: f32,
     },
     HangOnCeiling(f32),
     RideCursor,
@@ -178,11 +176,10 @@ impl PhysicsWorker {
         self.send(PhysicsCommand::PickUp(cursor_pos))
     }
 
-    pub fn update_held(&self, cursor_pos: Vec2, timestamp: f64, dt: f32) -> bool {
-        self.send(PhysicsCommand::UpdateHeld {
+    pub fn update_held(&self, cursor_pos: Vec2, timestamp: f64, _dt: f32) -> bool {
+        self.send(PhysicsCommand::SetHeldCursor {
             cursor_pos,
             timestamp,
-            dt,
         })
     }
 
@@ -190,11 +187,10 @@ impl PhysicsWorker {
         self.send(PhysicsCommand::Release)
     }
 
-    pub fn update_ride(&self, cursor_pos: Vec2, cursor_velocity: Vec2, dt: f32) -> bool {
-        self.send(PhysicsCommand::UpdateRide {
+    pub fn update_ride(&self, cursor_pos: Vec2, cursor_velocity: Vec2, _dt: f32) -> bool {
+        self.send(PhysicsCommand::SetRideInput {
             cursor_pos,
             cursor_velocity,
-            dt,
         })
     }
 
@@ -298,6 +294,8 @@ fn run_worker(
     let mut clock = FixedStepClock::new(tick_hz, Instant::now());
     let mut surfaces = Vec::new();
     let mut pending_events = Vec::new();
+    let mut held_cursor = None;
+    let mut ride_input = None;
 
     loop {
         while let Ok(command) = command_rx.try_recv() {
@@ -307,14 +305,23 @@ fn run_worker(
                 &screen_bounds(screen_left, screen_top, screen_right, screen_bottom),
                 &mut surfaces,
                 &mut pending_events,
+                &mut held_cursor,
+                &mut ride_input,
             );
         }
 
         let now = Instant::now();
         let steps = clock.steps_due(now);
         for _ in 0..steps {
+            let step_dt = clock.tick_duration.as_secs_f32();
+            if let Some((cursor_pos, timestamp)) = held_cursor {
+                engine.update_held(cursor_pos, timestamp, step_dt);
+            }
+            if let Some((cursor_pos, cursor_velocity)) = ride_input {
+                engine.update_ride(cursor_pos, cursor_velocity, step_dt);
+            }
             let mut events = engine.step_with_surfaces(
-                clock.tick_duration.as_secs_f32(),
+                step_dt,
                 screen_left,
                 screen_top,
                 screen_right,
@@ -339,6 +346,8 @@ fn run_worker(
                 &screen_bounds(screen_left, screen_top, screen_right, screen_bottom),
                 &mut surfaces,
                 &mut pending_events,
+                &mut held_cursor,
+                &mut ride_input,
             ),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
@@ -356,28 +365,52 @@ fn apply_command(
     screen_bounds: &(f32, f32, f32, f32),
     surfaces: &mut Vec<LedgeSurface>,
     pending_events: &mut Vec<EngineEvent>,
+    held_cursor: &mut Option<(Vec2, f64)>,
+    ride_input: &mut Option<(Vec2, Vec2)>,
 ) {
     match command {
         PhysicsCommand::SetSurfaces(next) => *surfaces = next,
-        PhysicsCommand::PickUp(cursor_pos) => pending_events.push(engine.pick_up(cursor_pos)),
-        PhysicsCommand::UpdateHeld {
+        PhysicsCommand::PickUp(cursor_pos) => {
+            *held_cursor = None;
+            pending_events.push(engine.pick_up(cursor_pos));
+        }
+        PhysicsCommand::SetHeldCursor {
             cursor_pos,
             timestamp,
-            dt,
-        } => engine.update_held(cursor_pos, timestamp, dt),
-        PhysicsCommand::Release => pending_events.push(engine.release()),
-        PhysicsCommand::UpdateRide {
+        } => *held_cursor = Some((cursor_pos, timestamp)),
+        PhysicsCommand::Release => {
+            *held_cursor = None;
+            pending_events.push(engine.release());
+        }
+        PhysicsCommand::SetRideInput {
             cursor_pos,
             cursor_velocity,
-            dt,
-        } => engine.update_ride(cursor_pos, cursor_velocity, dt),
-        PhysicsCommand::HangOnCeiling(screen_top) => engine.hang_on_ceiling(screen_top),
-        PhysicsCommand::RideCursor => engine.ride_cursor(),
+        } => *ride_input = Some((cursor_pos, cursor_velocity)),
+        PhysicsCommand::HangOnCeiling(screen_top) => {
+            *held_cursor = None;
+            *ride_input = None;
+            engine.hang_on_ceiling(screen_top);
+        }
+        PhysicsCommand::RideCursor => {
+            *held_cursor = None;
+            *ride_input = None;
+            engine.ride_cursor();
+        }
         PhysicsCommand::Sleep => {
+            *held_cursor = None;
+            *ride_input = None;
             engine.sleep(screen_bounds.0, screen_bounds.2, screen_bounds.3);
         }
-        PhysicsCommand::Wake => engine.wake(),
-        PhysicsCommand::ResetStand => engine.reset_stand(),
+        PhysicsCommand::Wake => {
+            *held_cursor = None;
+            *ride_input = None;
+            engine.wake();
+        }
+        PhysicsCommand::ResetStand => {
+            *held_cursor = None;
+            *ride_input = None;
+            engine.reset_stand();
+        }
         PhysicsCommand::FaceToward(x) => engine.face_toward(x),
         PhysicsCommand::PerchOn(surface) => {
             engine.perch_on(surface);
