@@ -1,7 +1,7 @@
 use arc_swap::ArcSwapOption;
 use glam::Vec2;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice2, IDCompositionDesktopDevice, IDCompositionTarget, IDCompositionVisual,
@@ -164,7 +164,7 @@ pub fn should_capture_input(is_over_sprite: bool, mouse_down: bool, stance: Stan
     is_over_sprite || mouse_down || stance == Stance::Held
 }
 
-static GLOBAL_INPUT: OnceLock<OverlayInput> = OnceLock::new();
+static GLOBAL_INPUT: LazyLock<ArcSwapOption<OverlayInput>> = LazyLock::new(ArcSwapOption::empty);
 
 struct OwnedHwnd(HWND);
 
@@ -254,7 +254,8 @@ unsafe extern "system" fn input_wndproc(
             let y = ((lparam.0 >> 16) as u16 as i16) as f32;
             let point = Vec2::new(x, y);
             if GLOBAL_INPUT
-                .get()
+                .load()
+                .as_ref()
                 .is_some_and(|input| input.hit_test(point))
             {
                 LRESULT(HTCLIENT as isize)
@@ -264,7 +265,7 @@ unsafe extern "system" fn input_wndproc(
         }
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_LBUTTONDOWN => {
-            if let Some(input) = GLOBAL_INPUT.get()
+            if let Some(input) = GLOBAL_INPUT.load().as_ref()
                 && input.mouse_down.swap(true, Ordering::AcqRel)
             {
                 return LRESULT(0);
@@ -277,7 +278,7 @@ unsafe extern "system" fn input_wndproc(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
-            if let Some(input) = GLOBAL_INPUT.get()
+            if let Some(input) = GLOBAL_INPUT.load().as_ref()
                 && !input.mouse_down.swap(false, Ordering::AcqRel)
             {
                 return LRESULT(0);
@@ -289,7 +290,7 @@ unsafe extern "system" fn input_wndproc(
             LRESULT(0)
         }
         WM_CAPTURECHANGED => {
-            if let Some(input) = GLOBAL_INPUT.get() {
+            if let Some(input) = GLOBAL_INPUT.load().as_ref() {
                 input.mouse_down.store(false, Ordering::Release);
             }
             LRESULT(0)
@@ -429,15 +430,15 @@ pub fn create_overlay_window(state: WindowSharedState) -> Result<HWND, String> {
 }
 
 pub struct CompositionOverlay {
-    hwnd: OwnedHwnd,
-    input_hwnd: OwnedHwnd,
-    origin: (i32, i32),
-    size: (u32, u32),
-    input: OverlayInput,
     visual: IDCompositionVisual,
     _target: IDCompositionTarget,
     _device: IDCompositionDesktopDevice,
+    input_hwnd: OwnedHwnd,
+    hwnd: OwnedHwnd,
+    input: OverlayInput,
     _com: ComApartment,
+    origin: (i32, i32),
+    size: (u32, u32),
     input_visible: bool,
 }
 
@@ -455,7 +456,6 @@ impl CompositionOverlay {
         let (left, top, right, bottom) = virtual_desktop_bounds();
         let size = ((right - left) as u32, (bottom - top) as u32);
         let input = OverlayInput::new();
-        let _ = GLOBAL_INPUT.set(input.clone());
         let input_hwnd = create_input_hwnd()?;
 
         // SAFETY: The DirectComposition device is created without an external rendering
@@ -479,17 +479,19 @@ impl CompositionOverlay {
             })?;
             (device, target, visual)
         };
+        GLOBAL_INPUT.store(Some(Arc::new(input.clone())));
+        IS_RUNNING.store(true, Ordering::SeqCst);
 
         let mut overlay = Self {
-            hwnd,
-            input_hwnd,
-            origin: (left, top),
-            size,
-            input,
             visual: visual.into(),
             _target: target,
             _device: device,
+            input_hwnd,
+            hwnd,
+            input,
             _com: com,
+            origin: (left, top),
+            size,
             input_visible: false,
         };
         overlay.try_sync_input_capture(false)?;
@@ -641,6 +643,12 @@ impl CompositionOverlay {
     ) -> Result<wgpu::Surface<'static>, String> {
         self.try_create_surface(instance)
             .map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for CompositionOverlay {
+    fn drop(&mut self) {
+        GLOBAL_INPUT.store(None);
     }
 }
 
