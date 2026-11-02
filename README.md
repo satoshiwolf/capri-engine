@@ -278,6 +278,14 @@ ws.on('message', (data) => {
 cargo test
 ```
 
+### Run the Hit-Test Benchmark:
+```powershell
+cargo bench --bench hittest
+```
+
+The release benchmark exercises the same lock-free CPU snapshot used by
+`WM_NCHITTEST` and exits with a failure when latency reaches 0.01 ms per query.
+
 ### Run Capri Engine:
 ```powershell
 cargo run --release
