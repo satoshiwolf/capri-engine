@@ -56,9 +56,7 @@ pub fn dispatch_command(command: IncomingCommand, context: &mut CommandContext<'
                 "arrive" => context.animation.play_action(AnimationAction::Arrive),
                 "leave" => context.animation.play_action(AnimationAction::Leave),
                 "reset_stand" => {
-                    if !context.worker.reset_stand() {
-                        eprintln!("[GATEWAY COMMAND] Could not request reset");
-                    }
+                    report_queue_result(context.worker.reset_stand(), "Could not request reset");
                 }
                 _ => {}
             }
@@ -87,6 +85,12 @@ pub fn dispatch_command(command: IncomingCommand, context: &mut CommandContext<'
                 eprintln!("[GATEWAY COMMAND] Could not request point-at");
             }
         }
+    }
+}
+
+fn report_queue_result(queued: bool, message: &str) {
+    if !queued {
+        eprintln!("[GATEWAY COMMAND] {message}");
     }
 }
 
