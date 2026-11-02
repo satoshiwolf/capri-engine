@@ -38,72 +38,74 @@ pub(crate) fn scan_ledges(skip_hwnds: &[isize]) -> Vec<Ledge> {
     let mut scanned: Vec<ScannedWindow> = Vec::new();
 
     unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        // SAFETY: EnumWindows passes the pointer created from `scanned` below and invokes
-        // this callback synchronously while that stack borrow remains valid.
-        let list = unsafe { &mut *(lparam.0 as *mut Vec<ScannedWindow>) };
+        // SAFETY: Windows invokes this callback with a valid handle and the LPARAM
+        // created from the live `scanned` vector for the synchronous enumeration.
+        unsafe {
+            let list = &mut *(lparam.0 as *mut Vec<ScannedWindow>);
 
-        if !IsWindow(Some(hwnd)).as_bool()
-            || !IsWindowVisible(hwnd).as_bool()
-            || IsIconic(hwnd).as_bool()
-        {
-            return true.into();
+            if !IsWindow(Some(hwnd)).as_bool()
+                || !IsWindowVisible(hwnd).as_bool()
+                || IsIconic(hwnd).as_bool()
+            {
+                return true.into();
+            }
+
+            let mut cloaked: u32 = 0;
+            let _ = DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+            if cloaked != 0 {
+                return true.into();
+            }
+
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+            if (ex_style & WS_EX_TOOLWINDOW.0) != 0 {
+                return true.into();
+            }
+
+            let mut class_buf = [0u16; 128];
+            let class_len = GetClassNameW(hwnd, &mut class_buf);
+            let class_name = String::from_utf16_lossy(&class_buf[..class_len as usize]);
+            if SHELL_CLASSES.contains(&class_name.as_str()) {
+                return true.into();
+            }
+
+            let mut bounds = RECT::default();
+            let dwm_res = DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                &mut bounds as *mut _ as *mut c_void,
+                std::mem::size_of::<RECT>() as u32,
+            );
+            if dwm_res.is_err() {
+                let _ = GetWindowRect(hwnd, &mut bounds);
+            }
+
+            let width = bounds.right - bounds.left;
+            let height = bounds.bottom - bounds.top;
+            if width < 120 || height < 60 {
+                return true.into();
+            }
+
+            let mut title_buf = [0u16; 256];
+            let title_len = GetWindowTextW(hwnd, &mut title_buf);
+            let title = String::from_utf16_lossy(&title_buf[..title_len as usize]);
+
+            let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+            let has_caption = (style & 0x00C00000) == 0x00C00000;
+
+            list.push(ScannedWindow {
+                hwnd,
+                title,
+                bounds,
+                is_seatable: has_caption,
+            });
+
+            true.into()
         }
-
-        let mut cloaked: u32 = 0;
-        let _ = DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_CLOAKED,
-            &mut cloaked as *mut _ as *mut c_void,
-            std::mem::size_of::<u32>() as u32,
-        );
-        if cloaked != 0 {
-            return true.into();
-        }
-
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-        if (ex_style & WS_EX_TOOLWINDOW.0) != 0 {
-            return true.into();
-        }
-
-        let mut class_buf = [0u16; 128];
-        let class_len = GetClassNameW(hwnd, &mut class_buf);
-        let class_name = String::from_utf16_lossy(&class_buf[..class_len as usize]);
-        if SHELL_CLASSES.contains(&class_name.as_str()) {
-            return true.into();
-        }
-
-        let mut bounds = RECT::default();
-        let dwm_res = DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
-            &mut bounds as *mut _ as *mut c_void,
-            std::mem::size_of::<RECT>() as u32,
-        );
-        if dwm_res.is_err() {
-            let _ = GetWindowRect(hwnd, &mut bounds);
-        }
-
-        let width = bounds.right - bounds.left;
-        let height = bounds.bottom - bounds.top;
-        if width < 120 || height < 60 {
-            return true.into();
-        }
-
-        let mut title_buf = [0u16; 256];
-        let title_len = GetWindowTextW(hwnd, &mut title_buf);
-        let title = String::from_utf16_lossy(&title_buf[..title_len as usize]);
-
-        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-        let has_caption = (style & 0x00C00000) == 0x00C00000;
-
-        list.push(ScannedWindow {
-            hwnd,
-            title,
-            bounds,
-            is_seatable: has_caption,
-        });
-
-        true.into()
     }
 
     // SAFETY: `scanned` remains alive for the synchronous enumeration, and Windows only
@@ -158,24 +160,24 @@ pub(crate) fn enumerate_monitors() -> Vec<MonitorInfo> {
         _rect: *mut RECT,
         lparam: LPARAM,
     ) -> BOOL {
-        let list_ptr = lparam.0 as *mut Vec<MonitorInfo>;
-        let mut info = MONITORINFOEXW::default();
-        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        // SAFETY: Windows supplies a live monitor handle and an LPARAM pointing to
+        // `list`, which remains writable throughout the synchronous enumeration.
+        unsafe {
+            let list_ptr = lparam.0 as *mut Vec<MonitorInfo>;
+            let mut info = MONITORINFOEXW::default();
+            info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
 
-        if GetMonitorInfoW(hmonitor, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
-            let r = info.monitorInfo.rcMonitor;
-            let w = info.monitorInfo.rcWork;
-            let name_raw = &info.szDevice;
-            let len = name_raw
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(name_raw.len());
-            let name = String::from_utf16_lossy(&name_raw[..len]);
-            let is_primary = (info.monitorInfo.dwFlags & 1) != 0;
+            if GetMonitorInfoW(hmonitor, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
+                let r = info.monitorInfo.rcMonitor;
+                let w = info.monitorInfo.rcWork;
+                let name_raw = &info.szDevice;
+                let len = name_raw
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(name_raw.len());
+                let name = String::from_utf16_lossy(&name_raw[..len]);
+                let is_primary = (info.monitorInfo.dwFlags & 1) != 0;
 
-            // SAFETY: `lparam` points to `list`, which remains alive for the synchronous
-            // EnumDisplayMonitors call and is writable for the duration of this callback.
-            unsafe {
                 (*list_ptr).push(MonitorInfo {
                     name,
                     bounds: (r.left, r.top, r.right, r.bottom),
@@ -183,8 +185,8 @@ pub(crate) fn enumerate_monitors() -> Vec<MonitorInfo> {
                     is_primary,
                 });
             }
+            true.into()
         }
-        true.into()
     }
 
     // SAFETY: `list` is a valid mutable local passed through LPARAM to the synchronous
