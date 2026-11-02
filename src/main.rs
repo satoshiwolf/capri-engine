@@ -11,10 +11,11 @@ use tokio::sync::{broadcast, mpsc as tokio_mpsc};
 use capri_engine::core::config::{
     DEFAULT_RENDER_HZ, DEFAULT_WS_PORT, DIZZY_VFX_OFFSET_Y_PX, GATEWAY_COMMAND_CAPACITY,
     GATEWAY_EVENT_CAPACITY, IMPACT_HARDNESS_NORMALIZER_PX_SEC, IMPACT_SPARK_COUNT,
-    LEDGE_SCAN_INTERVAL_MS, MOUTH_GLITCH_SCALE, SKID_LANDING_SPARK_COUNT, SKID_LEAN_PER_PX_SEC,
-    SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
+    LEDGE_SCAN_INTERVAL_MS, METRICS_SAMPLE_CAPACITY, MOUTH_GLITCH_SCALE, SKID_LANDING_SPARK_COUNT,
+    SKID_LEAN_PER_PX_SEC, SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
 };
 use capri_engine::core::events::EngineEvent;
+use capri_engine::core::metrics::FrameMetrics;
 use capri_engine::core::state::{Emotion, Facing, Stance};
 use capri_engine::core::visual::VisualTransform;
 use capri_engine::desktop::ledges::{Ledge, scan_ledges};
@@ -110,7 +111,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.30 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.31 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -179,6 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut was_mouse_down = false;
     let mut was_dazed = false;
     let mut last_skid_spark = Instant::now() - Duration::from_secs(1);
+    let mut frame_metrics = FrameMetrics::new(METRICS_SAMPLE_CAPACITY);
     let mut reported_stance = physics.stance();
     let mut last_hit_mask_key = None;
     let mut last_body = RenderedBody {
@@ -485,6 +487,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let frame_time = frame_start.elapsed();
+        frame_metrics.record(frame_time.as_secs_f64());
         if frame_time < target_frame_duration {
             let remaining = target_frame_duration - frame_time;
             wait_for_messages(remaining.as_millis().max(1) as u32);
@@ -492,8 +495,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     drop(ledge_scanner);
+    log_frame_metrics(&frame_metrics, sprite_manager.resident_mask_bytes());
     println!("[ENGINE] Finalizando Capri Engine limpiamente.");
     Ok(())
+}
+
+fn log_frame_metrics(metrics: &FrameMetrics, resident_mask_bytes: usize) {
+    let Some(average) = metrics.average_secs() else {
+        return;
+    };
+    let p95 = metrics.percentile_secs(95.0).unwrap_or(average);
+    let maximum = metrics.max_secs().unwrap_or(average);
+    let jitter = metrics.jitter_secs().unwrap_or(0.0);
+    println!(
+        "[METRICS] frames={} avg={:.3}ms p95={:.3}ms max={:.3}ms jitter={:.3}ms masks={}KiB",
+        metrics.len(),
+        average * 1_000.0,
+        p95 * 1_000.0,
+        maximum * 1_000.0,
+        jitter * 1_000.0,
+        resident_mask_bytes.div_ceil(1024)
+    );
 }
 
 fn prepare_loaded_strip(

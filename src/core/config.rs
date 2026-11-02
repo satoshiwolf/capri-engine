@@ -50,6 +50,7 @@ pub const DAZED_DURATION_SECS: f32 = 2.4;
 
 pub const DEFAULT_WS_PORT: u16 = 47823;
 pub const DEFAULT_RENDER_HZ: u32 = 60;
+pub const METRICS_SAMPLE_CAPACITY: usize = 600;
 pub const GATEWAY_COMMAND_CAPACITY: usize = 256;
 pub const GATEWAY_EVENT_CAPACITY: usize = 256;
 pub const GATEWAY_MAX_CONNECTIONS: usize = 16;
