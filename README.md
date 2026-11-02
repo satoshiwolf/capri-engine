@@ -53,6 +53,12 @@ flowchart TB
 - **Polyglot flexibility**: Your agent can be written in Python, TypeScript, Go, or C#; it only needs to exchange JSON over WebSocket.
 - **Fault isolation**: If the AI model takes seconds to respond or TTS fails, Capri keeps swaying, bouncing, and sitting naturally on your desktop without stuttering.
 
+The runtime uses a thin composition root (`main.rs`), a fixed-step physics
+worker, separate command and telemetry translators, a cancellable desktop
+scanner, and renderer submodules for GPU setup, textures, geometry, animation,
+and VFX. Public `Renderer`, `AnimationController`, and `PhysicsEngine` entry
+points remain stable.
+
 ---
 
 ## 2. V1 Scope and Implementation Status

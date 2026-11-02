@@ -53,6 +53,12 @@ flowchart TB
 - **Libertad poliglota**: Tu agente puede estar escrito en Python, TypeScript, Go o C#; solo necesita enviar y recibir JSON por WebSocket.
 - **Aislamiento contra fallos**: Si el modelo de IA demora en generar una respuesta o el TTS falla, Capri sigue balanceandose, rebotando y sentandose de forma natural en tu escritorio.
 
+El runtime usa una raiz de composicion delgada (`main.rs`), un worker de fisica
+de paso fijo, traductores separados de comandos y telemetria, un scanner de
+escritorio cancelable y submodulos de render para GPU, texturas, geometria,
+animacion y VFX. Las rutas publicas `Renderer`, `AnimationController` y
+`PhysicsEngine` se conservan.
+
 ---
 
 ## 2. Alcance V1 y Matriz de Estado de Implementacion
