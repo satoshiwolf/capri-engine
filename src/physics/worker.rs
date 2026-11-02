@@ -476,6 +476,24 @@ mod tests {
     }
 
     #[test]
+    fn rapid_pickup_and_release_do_not_leave_worker_held() {
+        let worker = PhysicsWorker::spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 60);
+        assert!(worker.pick_up(Vec2::new(200.0, 200.0)));
+        assert!(worker.release());
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            let output = worker
+                .recv_timeout(Duration::from_millis(100))
+                .expect("physics output");
+            if output.snapshot.stance() != Stance::Held {
+                return;
+            }
+        }
+        panic!("worker remained held after release");
+    }
+
+    #[test]
     fn worker_sleep_survives_multiple_ticks_and_shuts_down() {
         let worker = PhysicsWorker::spawn(Vec2::new(200.0, 200.0), (0.0, 0.0, 800.0, 600.0), 60);
         assert!(worker.sleep());

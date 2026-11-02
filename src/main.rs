@@ -45,6 +45,47 @@ struct RenderedBody {
     display_scale: f32,
 }
 
+#[derive(Clone, Copy)]
+enum DragState {
+    Idle,
+    PendingPickup(Vec2),
+    Held,
+}
+
+impl DragState {
+    fn advance(
+        self,
+        mouse_down: bool,
+        cursor_pos: Vec2,
+        timestamp: f64,
+        dt: f32,
+        worker: &PhysicsWorker,
+    ) -> Self {
+        match self {
+            Self::PendingPickup(_) if !mouse_down => Self::Idle,
+            Self::PendingPickup(grab_pos) => {
+                if worker.pick_up(grab_pos) {
+                    Self::Held
+                } else {
+                    Self::PendingPickup(grab_pos)
+                }
+            }
+            Self::Held if mouse_down => {
+                let _ = worker.update_held(cursor_pos, timestamp, dt);
+                Self::Held
+            }
+            Self::Held => {
+                if worker.release() {
+                    Self::Idle
+                } else {
+                    Self::Held
+                }
+            }
+            Self::Idle => Self::Idle,
+        }
+    }
+}
+
 struct LedgeScanner {
     ledges: Receiver<Vec<Ledge>>,
     cancel: mpsc::Sender<()>,
@@ -112,7 +153,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.36 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.37 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -177,6 +218,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_frame = Instant::now();
     let mut last_cursor = Vec2::ZERO;
     let mut was_mouse_down = false;
+    let mut drag_state = DragState::Idle;
+    let mut submitted_surfaces: Option<Vec<LedgeSurface>> = None;
     let mut was_dazed = false;
     let mut last_skid_spark = Instant::now() - Duration::from_secs(1);
     let mut frame_metrics = FrameMetrics::new(METRICS_SAMPLE_CAPACITY);
@@ -207,8 +250,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cached_ledges = ledges;
         }
         let surfaces = ledge_surfaces(&cached_ledges);
-        if !physics_worker.set_surfaces(surfaces.clone()) {
-            eprintln!("[PHYSICS] No se pudieron actualizar las superficies");
+        if submitted_surfaces.as_ref() != Some(&surfaces)
+            && physics_worker.set_surfaces(surfaces.clone())
+        {
+            submitted_surfaces = Some(surfaces.clone());
         }
 
         let (cursor_x, cursor_y) = overlay.try_poll_cursor()?;
@@ -249,15 +294,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overlay.input().set_capture_input(capture_input);
         overlay.try_sync_input_capture(capture_input)?;
 
-        if mouse_down && !was_mouse_down && is_over_capri {
-            if !physics_worker.pick_up(cursor_screen) {
-                eprintln!("[PHYSICS] No se pudo iniciar el arrastre");
-            }
-        } else if mouse_down && was_mouse_down && physics.stance() == Stance::Held {
-            let _ = physics_worker.update_held(cursor_screen, timestamp, dt);
-        } else if !mouse_down && was_mouse_down && physics.stance() == Stance::Held {
-            let _ = physics_worker.release();
+        if mouse_down && !was_mouse_down && is_over_capri && matches!(drag_state, DragState::Idle) {
+            drag_state = DragState::PendingPickup(cursor_screen);
         }
+        drag_state = drag_state.advance(mouse_down, cursor_screen, timestamp, dt, &physics_worker);
         was_mouse_down = mouse_down;
 
         if physics.stance() == Stance::Ride {
