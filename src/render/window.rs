@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice2, IDCompositionDesktopDevice, IDCompositionTarget, IDCompositionVisual,
 };
@@ -12,12 +12,12 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, HTCLIENT,
-    HTTRANSPARENT, LWA_ALPHA, MA_NOACTIVATE, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS,
+    HTTRANSPARENT, MA_NOACTIVATE, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS,
     MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW, PostQuitMessage, QS_ALLINPUT,
-    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
-    SetWindowPos, ShowWindow, WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow,
+    WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCHITTEST,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{IUnknown, Interface, PCWSTR, w};
 
@@ -315,7 +315,12 @@ fn create_input_hwnd() -> Result<OwnedHwnd, String> {
         let _ = RegisterClassExW(&window_class);
 
         let hwnd = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+            WS_EX_TOPMOST
+                | WS_EX_TOOLWINDOW
+                | WS_EX_NOACTIVATE
+                | WS_EX_NOREDIRECTIONBITMAP
+                | WS_EX_TRANSPARENT
+                | WS_EX_LAYERED,
             class_name,
             w!("Capri Input"),
             WS_POPUP,
@@ -330,8 +335,6 @@ fn create_input_hwnd() -> Result<OwnedHwnd, String> {
         )
         .map_err(|error| format!("CreateWindowExW input: {error}"))?;
 
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 1, LWA_ALPHA)
-            .map_err(|error| format!("SetLayeredWindowAttributes: {error}"))?;
         SetWindowPos(
             hwnd,
             Some(HWND(-1isize as *mut _)),
