@@ -7,6 +7,8 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
 };
+use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetSystemMetrics, GetWindowLongW,
     GetWindowRect, GetWindowTextW, IsIconic, IsWindow, IsWindowVisible, SM_CXVIRTUALSCREEN,
@@ -149,6 +151,19 @@ pub(crate) fn scan_ledges(skip_hwnds: &[isize]) -> Vec<Ledge> {
     }
 
     found_ledges
+}
+
+pub fn process_working_set_bytes() -> Option<u64> {
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `counters` is a writable structure with its required byte size, and
+    // `GetCurrentProcess` returns the process pseudo-handle for this call.
+    unsafe {
+        GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb).ok()?;
+    }
+    Some(counters.WorkingSetSize as u64)
 }
 
 pub(crate) fn enumerate_monitors() -> Vec<MonitorInfo> {

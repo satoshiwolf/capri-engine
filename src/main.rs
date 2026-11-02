@@ -17,7 +17,7 @@ use capri_engine::core::metrics::FrameMetrics;
 use capri_engine::core::state::{Facing, Stance};
 use capri_engine::core::visual::VisualTransform;
 use capri_engine::desktop::monitors::{enumerate_monitors, virtual_desktop_bounds};
-use capri_engine::desktop::{LedgeScanner, ledge_surfaces};
+use capri_engine::desktop::{LedgeScanner, ledge_surfaces, process_working_set_bytes};
 use capri_engine::gateway::protocol::{IncomingCommand, OutgoingEvent};
 use capri_engine::gateway::{
     CommandContext, WsGatewayServer, dispatch_command, send_engine_telemetry,
@@ -83,7 +83,7 @@ impl DragState {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.50 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.51 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -414,13 +414,15 @@ fn log_frame_metrics(metrics: &FrameMetrics, resident_mask_bytes: usize) {
     let p95 = metrics.percentile_secs(95.0).unwrap_or(average);
     let maximum = metrics.max_secs().unwrap_or(average);
     let jitter = metrics.jitter_secs().unwrap_or(0.0);
+    let working_set_bytes = process_working_set_bytes().unwrap_or(0);
     println!(
-        "[METRICS] frames={} avg={:.3}ms p95={:.3}ms max={:.3}ms jitter={:.3}ms masks={}KiB",
+        "[METRICS] frames={} avg={:.3}ms p95={:.3}ms max={:.3}ms jitter={:.3}ms masks={}KiB rss={}KiB",
         metrics.len(),
         average * 1_000.0,
         p95 * 1_000.0,
         maximum * 1_000.0,
         jitter * 1_000.0,
-        resident_mask_bytes.div_ceil(1024)
+        resident_mask_bytes.div_ceil(1024),
+        working_set_bytes.div_ceil(1024)
     );
 }
