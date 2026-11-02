@@ -250,9 +250,15 @@ unsafe extern "system" fn input_wndproc(
 ) -> LRESULT {
     match msg {
         WM_NCHITTEST => {
-            let x = (lparam.0 as u16 as i16) as f32;
-            let y = ((lparam.0 >> 16) as u16 as i16) as f32;
-            let point = Vec2::new(x, y);
+            let mut cursor = POINT::default();
+            // SAFETY: `cursor` is a writable POINT owned by this call. Querying the
+            // current cursor avoids signed 16-bit truncation on virtual desktops.
+            unsafe {
+                if GetCursorPos(&mut cursor).is_err() {
+                    return LRESULT(HTTRANSPARENT as isize);
+                }
+            }
+            let point = Vec2::new(cursor.x as f32, cursor.y as f32);
             if GLOBAL_INPUT
                 .load()
                 .as_ref()
