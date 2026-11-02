@@ -6,7 +6,7 @@ use image::GenericImageView;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 #[derive(Debug, Clone)]
 pub struct SpriteStrip {
@@ -196,6 +196,7 @@ pub struct SpriteManager {
     base_dir: PathBuf,
     request_tx: Option<Sender<LoadRequest>>,
     response_rx: Option<Receiver<LoadResponse>>,
+    worker: Option<JoinHandle<()>>,
     pending: HashSet<SpriteAssetKey>,
     usage: HashMap<String, u64>,
     usage_tick: u64,
@@ -211,7 +212,7 @@ impl SpriteManager {
         let (request_tx, request_rx) = mpsc::channel::<LoadRequest>();
         let (response_tx, response_rx) = mpsc::channel::<LoadResponse>();
 
-        thread::spawn(move || {
+        let worker = thread::spawn(move || {
             while let Ok(request) = request_rx.recv() {
                 let result = SpriteStrip::try_from_spec(&request.path, &request.spec);
                 let _ = response_tx.send(LoadResponse {
@@ -226,6 +227,7 @@ impl SpriteManager {
             base_dir: base_dir.as_ref().to_path_buf(),
             request_tx: Some(request_tx),
             response_rx: Some(response_rx),
+            worker: Some(worker),
             pending: HashSet::new(),
             usage: HashMap::new(),
             usage_tick: 0,
@@ -381,6 +383,16 @@ impl SpriteManager {
 impl Default for SpriteManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for SpriteManager {
+    fn drop(&mut self) {
+        self.request_tx.take();
+        self.response_rx.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

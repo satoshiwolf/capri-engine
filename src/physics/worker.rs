@@ -271,6 +271,12 @@ impl PhysicsWorker {
             })
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_none_or(std::thread::JoinHandle::is_finished)
+    }
+
     fn send(&self, command: PhysicsCommand) -> bool {
         self.command_tx
             .as_ref()
