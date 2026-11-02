@@ -11,13 +11,13 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, HTCLIENT, HTTRANSPARENT,
-    LWA_ALPHA, MA_NOACTIVATE, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS, MsgWaitForMultipleObjectsEx,
-    PM_REMOVE, PeekMessageW, PostQuitMessage, QS_ALLINPUT, RegisterClassExW, SW_HIDE,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
-    WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCHITTEST,
-    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, HTCLIENT,
+    HTTRANSPARENT, LWA_ALPHA, MA_NOACTIVATE, MSG_WAIT_FOR_MULTIPLE_OBJECTS_EX_FLAGS,
+    MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW, PostQuitMessage, QS_ALLINPUT,
+    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
+    SetWindowPos, ShowWindow, WM_CAPTURECHANGED, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEACTIVATE, WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{IUnknown, Interface, PCWSTR, w};
 
@@ -105,6 +105,36 @@ pub fn should_capture_input(is_over_sprite: bool, mouse_down: bool, stance: Stan
 }
 
 static GLOBAL_INPUT: OnceLock<OverlayInput> = OnceLock::new();
+
+struct OwnedHwnd(HWND);
+
+impl OwnedHwnd {
+    fn new(hwnd: HWND) -> Self {
+        Self(hwnd)
+    }
+
+    fn raw(&self) -> HWND {
+        self.0
+    }
+
+    fn into_raw(mut self) -> HWND {
+        let hwnd = self.0;
+        self.0 = HWND(std::ptr::null_mut());
+        hwnd
+    }
+}
+
+impl Drop for OwnedHwnd {
+    fn drop(&mut self) {
+        if !self.0.0.is_null() {
+            // SAFETY: This wrapper owns a window created on the current UI thread and
+            // destroys it exactly once before the handle is forgotten.
+            unsafe {
+                let _ = DestroyWindow(self.0);
+            }
+        }
+    }
+}
 
 struct ComApartment;
 
@@ -208,7 +238,7 @@ unsafe extern "system" fn input_wndproc(
     }
 }
 
-fn create_overlay_hwnd() -> Result<HWND, String> {
+fn create_overlay_hwnd() -> Result<OwnedHwnd, String> {
     // SAFETY: The instance handle and static UTF-16 strings remain valid while
     // `RegisterClassExW` and `CreateWindowExW` consume them. The window procedure
     // remains valid for the process lifetime.
@@ -265,11 +295,11 @@ fn create_overlay_hwnd() -> Result<HWND, String> {
             SWP_SHOWWINDOW | SWP_NOACTIVATE,
         );
 
-        Ok(hwnd)
+        Ok(OwnedHwnd::new(hwnd))
     }
 }
 
-fn create_input_hwnd() -> Result<HWND, String> {
+fn create_input_hwnd() -> Result<OwnedHwnd, String> {
     // SAFETY: The input class and window use process-lifetime resources. The input
     // window remains hidden until an opaque sprite pixel is under the cursor.
     unsafe {
@@ -312,7 +342,7 @@ fn create_input_hwnd() -> Result<HWND, String> {
             SWP_NOACTIVATE,
         )
         .map_err(|error| format!("SetWindowPos input: {error}"))?;
-        Ok(hwnd)
+        Ok(OwnedHwnd::new(hwnd))
     }
 }
 
@@ -322,12 +352,12 @@ fn create_input_hwnd() -> Result<HWND, String> {
 )]
 #[allow(deprecated)]
 pub fn create_overlay_window(_state: WindowSharedState) -> Result<HWND, String> {
-    create_overlay_hwnd()
+    create_overlay_hwnd().map(OwnedHwnd::into_raw)
 }
 
 pub struct CompositionOverlay {
-    hwnd: HWND,
-    input_hwnd: HWND,
+    hwnd: OwnedHwnd,
+    input_hwnd: OwnedHwnd,
     origin: (i32, i32),
     size: (u32, u32),
     input: OverlayInput,
@@ -362,7 +392,7 @@ impl CompositionOverlay {
                 DCompositionCreateDevice2(None::<&IUnknown>)
                     .map_err(|error| format!("DCompositionCreateDevice2: {error}"))?;
             let target = device
-                .CreateTargetForHwnd(hwnd, true)
+                .CreateTargetForHwnd(hwnd.raw(), true)
                 .map_err(|error| format!("CreateTargetForHwnd: {error}"))?;
             let visual = device
                 .CreateVisual()
@@ -393,7 +423,7 @@ impl CompositionOverlay {
     }
 
     pub fn hwnd(&self) -> HWND {
-        self.hwnd
+        self.hwnd.raw()
     }
 
     pub fn input(&self) -> &OverlayInput {
@@ -401,7 +431,7 @@ impl CompositionOverlay {
     }
 
     pub fn input_hwnd(&self) -> HWND {
-        self.input_hwnd
+        self.input_hwnd.raw()
     }
 
     pub fn origin(&self) -> (i32, i32) {
@@ -442,7 +472,7 @@ impl CompositionOverlay {
             // Moving it under the cursor only changes its hit-test area.
             unsafe {
                 SetWindowPos(
-                    self.input_hwnd,
+                    self.input_hwnd.raw(),
                     Some(HWND(-1isize as *mut _)),
                     cursor_x - 8,
                     cursor_y - 8,
@@ -464,7 +494,7 @@ impl CompositionOverlay {
         unsafe {
             let _ = ReleaseCapture();
             self.input.mouse_down.store(false, Ordering::Release);
-            let _ = ShowWindow(self.input_hwnd, SW_HIDE);
+            let _ = ShowWindow(self.input_hwnd.raw(), SW_HIDE);
         }
         self.input_visible = false;
         Ok(())
