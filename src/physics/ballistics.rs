@@ -12,6 +12,10 @@ use glam::Vec2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlightPhase {
     Air,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `SkidState` for grounded motion. This variant will be removed in 0.4.0."
+    )]
     FloorSlide,
 }
 
@@ -105,6 +109,7 @@ impl FlightState {
                 self.angle += self.angular_velocity * dt;
                 self.center += self.velocity * dt;
             }
+            #[allow(deprecated)]
             FlightPhase::FloorSlide => {
                 let angle_diff = self.lie_target_angle - self.angle;
                 self.angle += angle_diff.clamp(

@@ -102,6 +102,10 @@ pub struct SquashState {
     /// Transverse stretch factor, perpendicular to the impact normal.
     pub stretch: f32,
     /// Remaining deformation frames.
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `update_dt()` and `hold_duration`. This field will be removed in 0.4.0."
+    )]
     pub frames_remaining: u8,
     /// Time elapsed in seconds.
     pub elapsed: f32,
@@ -110,6 +114,7 @@ pub struct SquashState {
 }
 
 impl SquashState {
+    #[allow(deprecated)]
     pub fn new(normal: Vec2, hard: f32) -> Self {
         let hard = hard.clamp(0.0, 1.0);
         // Compression ranges from 0.84 at light impact to 0.54 at full impact.
@@ -128,6 +133,11 @@ impl SquashState {
         }
     }
 
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `update_dt()` for time-based animation. This method will be removed in 0.4.0."
+    )]
+    #[allow(deprecated)]
     pub fn update(&mut self) -> Option<Vec2> {
         if self.frames_remaining == 0 {
             return None;

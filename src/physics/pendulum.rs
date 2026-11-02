@@ -14,12 +14,21 @@ pub struct PendulumState {
     /// Angular velocity in degrees per second.
     pub angular_velocity: f32,
     /// Speed-dependent hair smear offset in pixels.
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `AnimationSample::smear`. This field will be removed in 0.4.0."
+    )]
     pub smear_offset: Vec2,
     /// Hair lean factor in the range `-7.0..=7.0`.
+    #[deprecated(
+        since = "0.3.1",
+        note = "This field is not consumed by rendering and will be removed in 0.4.0."
+    )]
     pub hair_lean: f32,
 }
 
 impl PendulumState {
+    #[allow(deprecated)]
     pub fn new(grab_point: Vec2) -> Self {
         Self {
             grab_point,
@@ -30,6 +39,7 @@ impl PendulumState {
         }
     }
 
+    #[allow(deprecated)]
     pub fn update(&mut self, cursor_velocity: Vec2, dt: f32) {
         let dt = dt.clamp(0.001, 0.05);
 
