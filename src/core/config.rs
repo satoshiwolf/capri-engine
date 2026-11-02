@@ -41,6 +41,13 @@ pub const DAZED_DURATION_SECS: f32 = 2.4;
 
 pub const DEFAULT_WS_PORT: u16 = 47823;
 pub const DEFAULT_RENDER_HZ: u32 = 60;
+pub const GATEWAY_COMMAND_CAPACITY: usize = 256;
+pub const GATEWAY_EVENT_CAPACITY: usize = 256;
+pub const GATEWAY_MAX_CONNECTIONS: usize = 16;
+pub const GATEWAY_MAX_MESSAGE_BYTES: usize = 256 * 1024;
+pub const GATEWAY_MAX_FRAME_BYTES: usize = 64 * 1024;
+pub const GATEWAY_MAX_WRITE_BUFFER_BYTES: usize = GATEWAY_MAX_MESSAGE_BYTES * 2;
+pub const GATEWAY_ACCEPT_RETRY_DELAY_MS: u64 = 100;
 
 /// Time spent sitting before the avatar settles into the lay-down loop.
 pub const SIT_TO_LAYDOWN_SECS: f32 = 60.0;

@@ -8,8 +8,8 @@ use glam::Vec2;
 use tokio::sync::{broadcast, mpsc as tokio_mpsc};
 
 use capri_engine::core::config::{
-    DEFAULT_RENDER_HZ, DEFAULT_WS_PORT, LEDGE_SCAN_INTERVAL_MS, SKID_LEAN_PER_PX_SEC,
-    SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
+    DEFAULT_RENDER_HZ, DEFAULT_WS_PORT, GATEWAY_COMMAND_CAPACITY, GATEWAY_EVENT_CAPACITY,
+    LEDGE_SCAN_INTERVAL_MS, SKID_LEAN_PER_PX_SEC, SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
 };
 use capri_engine::core::events::EngineEvent;
 use capri_engine::core::state::{Emotion, Facing, Stance};
@@ -43,15 +43,16 @@ struct RenderedBody {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.2 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.3.3 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
-    let (cmd_tx, mut cmd_rx) = tokio_mpsc::unbounded_channel::<IncomingCommand>();
-    let (event_tx, _event_rx) = broadcast::channel::<OutgoingEvent>(128);
+    let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
+    let (event_tx, _event_rx) = broadcast::channel::<OutgoingEvent>(GATEWAY_EVENT_CAPACITY);
 
     let server_event_tx = event_tx.clone();
     tokio::spawn(async move {
-        let server = WsGatewayServer::new(DEFAULT_WS_PORT, cmd_tx, server_event_tx);
+        let server =
+            WsGatewayServer::with_bounded_channel(DEFAULT_WS_PORT, cmd_tx, server_event_tx);
         if let Err(error) = server.run().await {
             eprintln!("[GATEWAY ERROR] Error en servidor WebSocket: {error}");
         }

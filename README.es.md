@@ -285,6 +285,10 @@ cargo run --release
 
 El objetivo de render usa 60 Hz por defecto. Define `CAPRI_TARGET_FPS=120` para solicitar la cadencia de 120 Hz en pantallas compatibles.
 
+La pasarela loopback admite hasta 16 clientes concurrentes y 256 KiB por mensaje.
+Define `CAPRI_GATEWAY_TOKEN` para exigir `Authorization: Bearer <token>` y
+`CAPRI_GATEWAY_ALLOWED_ORIGIN` para permitir un unico origen de navegador.
+
 ### Probar con el Agente Mock de Prueba:
 En otra terminal, mientras `capri-engine` esta corriendo:
 ```powershell

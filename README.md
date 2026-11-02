@@ -285,6 +285,11 @@ cargo run --release
 
 The render target defaults to 60 Hz. Set `CAPRI_TARGET_FPS=120` to request the 120 Hz cadence on compatible displays.
 
+The loopback gateway is limited to 16 concurrent clients and 256 KiB per message.
+Set `CAPRI_GATEWAY_TOKEN` to require `Authorization: Bearer <token>`. Browser
+clients are rejected unless their exact `Origin` is configured with
+`CAPRI_GATEWAY_ALLOWED_ORIGIN`.
+
 ### Test with Mock Agent:
 In another terminal while `capri-engine` is running:
 ```powershell
