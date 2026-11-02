@@ -1,6 +1,8 @@
 use crate::core::config::{LEDGE_SUPPORT_MARGIN_RATIO, SPRITE_HEIGHT, SPRITE_WIDTH};
 use glam::Vec2;
 
+pub const FLOOR_SURFACE_HWND: isize = 0;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LedgeSurface {
     pub hwnd: isize,
@@ -21,6 +23,20 @@ impl LedgeSurface {
         let min_x = self.left + margin;
         let max_x = self.right - margin;
         (min_x <= max_x).then_some((min_x, max_x))
+    }
+
+    pub fn floor(left: f32, right: f32, y: f32) -> Self {
+        Self {
+            hwnd: FLOOR_SURFACE_HWND,
+            left,
+            right,
+            y,
+            window_title: None,
+        }
+    }
+
+    pub fn is_floor(&self) -> bool {
+        self.hwnd == FLOOR_SURFACE_HWND
     }
 }
 

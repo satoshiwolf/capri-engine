@@ -49,6 +49,12 @@ pub const GATEWAY_MAX_FRAME_BYTES: usize = 64 * 1024;
 pub const GATEWAY_MAX_WRITE_BUFFER_BYTES: usize = GATEWAY_MAX_MESSAGE_BYTES * 2;
 pub const GATEWAY_ACCEPT_RETRY_DELAY_MS: u64 = 100;
 
+/// Command-driven suspension position below the top edge of the virtual desktop.
+pub const CEILING_HANG_OFFSET_PX: f32 = 60.0;
+
+/// Cursor-ride vertical offset in screen pixels.
+pub const RIDE_CURSOR_OFFSET_PX: f32 = 86.0;
+
 /// Time spent sitting before the avatar settles into the lay-down loop.
 pub const SIT_TO_LAYDOWN_SECS: f32 = 60.0;
 

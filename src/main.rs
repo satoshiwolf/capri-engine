@@ -107,7 +107,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.5 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.3.6 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -267,26 +267,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     match action.as_str() {
                         "hang_on_ceiling" => {
-                            physics.stance = Stance::Upside;
-                            physics.rotation = 180.0;
-                            physics.center_pos.y = vy as f32 + 60.0;
+                            physics.hang_on_ceiling(vy as f32);
                         }
                         "hang_on_cursor" => {
-                            physics.stance = Stance::Ride;
+                            physics.ride_cursor();
                         }
                         "sleep" => {
-                            physics.stance = Stance::LayDown;
+                            physics.sleep(vx as f32, vr as f32, vb as f32);
                         }
                         "wake" => {
-                            physics.stance = Stance::Stand;
-                            physics.rotation = 0.0;
+                            physics.wake();
                             animation.play_action(AnimationAction::Wake);
                         }
                         "arrive" => animation.play_action(AnimationAction::Arrive),
                         "leave" => animation.play_action(AnimationAction::Leave),
                         "reset_stand" => {
-                            physics.stance = Stance::Stand;
-                            physics.rotation = 0.0;
+                            physics.reset_stand();
                         }
                         _ => {}
                     }
@@ -310,11 +306,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "[GATEWAY COMMAND] Señalar pantalla {} en ({}, {})",
                         screen, x, y
                     );
-                    physics.facing = if x < physics.center_pos.x {
-                        Facing::Left
-                    } else {
-                        Facing::Right
-                    };
+                    physics.face_toward(x);
                 }
             }
         }
