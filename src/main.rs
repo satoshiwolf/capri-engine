@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc;
-use std::thread;
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use glam::Vec2;
@@ -40,10 +40,74 @@ struct RenderedBody {
     display_scale: f32,
 }
 
+struct LedgeScanner {
+    ledges: Receiver<Vec<Ledge>>,
+    cancel: mpsc::Sender<()>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl LedgeScanner {
+    fn new(skip_hwnd: isize) -> Self {
+        Self::spawn(Duration::from_millis(LEDGE_SCAN_INTERVAL_MS), move || {
+            scan_ledges(&[skip_hwnd])
+        })
+    }
+
+    fn spawn<F>(interval: Duration, mut scan: F) -> Self
+    where
+        F: FnMut() -> Vec<Ledge> + Send + 'static,
+    {
+        let (ledge_tx, ledges) = mpsc::sync_channel(2);
+        let (cancel, cancel_rx) = mpsc::channel();
+        let worker =
+            thread::spawn(move || Self::run_worker(interval, &mut scan, ledge_tx, cancel_rx));
+        Self {
+            ledges,
+            cancel,
+            worker: Some(worker),
+        }
+    }
+
+    fn run_worker<F>(
+        interval: Duration,
+        scan: &mut F,
+        ledge_tx: SyncSender<Vec<Ledge>>,
+        cancel_rx: Receiver<()>,
+    ) where
+        F: FnMut() -> Vec<Ledge>,
+    {
+        loop {
+            if matches!(
+                ledge_tx.try_send(scan()),
+                Err(mpsc::TrySendError::Disconnected(_))
+            ) {
+                break;
+            }
+            match cancel_rx.recv_timeout(interval) {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+
+    fn try_recv(&self) -> Result<Vec<Ledge>, mpsc::TryRecvError> {
+        self.ledges.try_recv()
+    }
+}
+
+impl Drop for LedgeScanner {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.3 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.3.4 - Cyberpunk Physics Host   ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -90,17 +154,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut vfx = VfxSystem::new();
     let default_mask = create_default_mask();
 
-    let (ledge_tx, ledge_rx) = mpsc::channel::<Vec<Ledge>>();
     let overlay_hwnd = hwnd.0 as isize;
-    thread::spawn(move || {
-        while IS_RUNNING.load(Ordering::Acquire) {
-            let ledges = scan_ledges(&[overlay_hwnd]);
-            if ledge_tx.send(ledges).is_err() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(LEDGE_SCAN_INTERVAL_MS));
-        }
-    });
+    let ledge_scanner = LedgeScanner::new(overlay_hwnd);
 
     let mut cached_ledges = Vec::new();
     let mut current_monitor_idx = 0;
@@ -137,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         sprite_manager.poll_loads();
-        while let Ok(ledges) = ledge_rx.try_recv() {
+        while let Ok(ledges) = ledge_scanner.try_recv() {
             cached_ledges = ledges;
         }
         let surfaces = ledge_surfaces(&cached_ledges);
@@ -413,6 +468,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    drop(ledge_scanner);
     println!("[ENGINE] Finalizando Capri Engine limpiamente.");
     Ok(())
 }
@@ -582,5 +638,30 @@ fn parse_emotion(value: &str) -> Emotion {
         "sleepy" => Emotion::Sleepy,
         "focused" => Emotion::Focused,
         _ => Emotion::Neutral,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn ledge_scanner_stops_and_joins_when_dropped() {
+        let scans = Arc::new(AtomicUsize::new(0));
+        let worker_scans = scans.clone();
+        let scanner = LedgeScanner::spawn(Duration::from_millis(1), move || {
+            worker_scans.fetch_add(1, Ordering::AcqRel);
+            Vec::new()
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        assert!(scans.load(Ordering::Acquire) > 0);
+
+        drop(scanner);
+        let stopped_at = scans.load(Ordering::Acquire);
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(scans.load(Ordering::Acquire), stopped_at);
     }
 }
