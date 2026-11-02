@@ -12,9 +12,10 @@ pub struct MonitorInfo {
 
 impl MonitorInfo {
     pub fn contains_point(&self, p: Vec2) -> bool {
-        let x = p.x as i32;
-        let y = p.y as i32;
-        x >= self.bounds.0 && x < self.bounds.2 && y >= self.bounds.1 && y < self.bounds.3
+        p.x >= self.bounds.0 as f32
+            && p.x < self.bounds.2 as f32
+            && p.y >= self.bounds.1 as f32
+            && p.y < self.bounds.3 as f32
     }
 }
 
@@ -56,4 +57,62 @@ pub fn can_cross_border(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn monitor(name: &str, bounds: (i32, i32, i32, i32), is_primary: bool) -> MonitorInfo {
+        MonitorInfo {
+            name: name.to_string(),
+            bounds,
+            work_area: bounds,
+            is_primary,
+        }
+    }
+
+    #[test]
+    fn adjacent_monitors_cross_in_both_directions() {
+        let monitors = [
+            monitor("left", (-1920, 0, 0, 1080), true),
+            monitor("right", (0, 0, 1920, 1080), false),
+        ];
+
+        assert_eq!(can_cross_border(0, 1, 500.0, &monitors), Some(1));
+        assert_eq!(can_cross_border(1, -1, 500.0, &monitors), Some(0));
+    }
+
+    #[test]
+    fn separated_monitors_do_not_cross() {
+        let monitors = [
+            monitor("left", (0, 0, 1920, 1080), true),
+            monitor("right", (1931, 0, 3840, 1080), false),
+        ];
+
+        assert_eq!(can_cross_border(0, 1, 500.0, &monitors), None);
+        assert_eq!(can_cross_border(1, -1, 500.0, &monitors), None);
+    }
+
+    #[test]
+    fn vertical_overlap_controls_crossing_for_offset_monitors() {
+        let monitors = [
+            monitor("primary", (0, 0, 1920, 1080), true),
+            monitor("offset", (1920, 400, 3840, 1480), false),
+        ];
+
+        assert_eq!(can_cross_border(0, 1, 300.0, &monitors), None);
+        assert_eq!(can_cross_border(0, 1, 500.0, &monitors), Some(1));
+        assert_eq!(can_cross_border(0, 1, 1480.0, &monitors), None);
+    }
+
+    #[test]
+    fn monitor_contains_point_uses_half_open_bounds() {
+        let monitor = monitor("negative", (-1920, -200, 0, 880), true);
+
+        assert!(monitor.contains_point(Vec2::new(-1920.0, -200.0)));
+        assert!(monitor.contains_point(Vec2::new(-0.1, 879.9)));
+        assert!(!monitor.contains_point(Vec2::new(0.0, 0.0)));
+        assert!(!monitor.contains_point(Vec2::new(-1920.0, 880.0)));
+    }
 }
