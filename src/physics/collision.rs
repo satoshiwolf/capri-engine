@@ -1,4 +1,10 @@
-use crate::core::config::{LEDGE_SUPPORT_MARGIN_RATIO, SPRITE_HEIGHT, SPRITE_WIDTH};
+use crate::core::config::{
+    ANIME_FRAME_SECS, LEDGE_SUPPORT_MARGIN_RATIO, SPRITE_HEIGHT, SPRITE_WIDTH,
+    SQUASH_COMPRESSION_RANGE, SQUASH_FIRST_RECOVERY_SCALE, SQUASH_FIRST_SETTLE_FRACTION,
+    SQUASH_HOLD_FRAME_BASE, SQUASH_HOLD_FRAME_SCALE, SQUASH_MIN_COMPRESSION,
+    SQUASH_OVERSHOOT_SCALE, SQUASH_RECOVERY_SECS, SQUASH_SECOND_SETTLE_FRACTION,
+    SQUASH_TRANSVERSE_RATIO,
+};
 use glam::Vec2;
 
 pub const FLOOR_SURFACE_HWND: isize = 0;
@@ -107,10 +113,10 @@ impl SquashState {
     pub fn new(normal: Vec2, hard: f32) -> Self {
         let hard = hard.clamp(0.0, 1.0);
         // Compression ranges from 0.84 at light impact to 0.54 at full impact.
-        let compression = 0.84 - hard * 0.30;
-        let stretch = 1.0 + (1.0 - compression) * 0.60;
-        let frames = (1.0 + hard * 4.0).round() as u8;
-        let hold_duration = frames as f32 / 24.0;
+        let compression = SQUASH_MIN_COMPRESSION - hard * SQUASH_COMPRESSION_RANGE;
+        let stretch = 1.0 + (1.0 - compression) * SQUASH_TRANSVERSE_RATIO;
+        let frames = (SQUASH_HOLD_FRAME_BASE + hard * SQUASH_HOLD_FRAME_SCALE).round() as u8;
+        let hold_duration = frames as f32 * ANIME_FRAME_SECS;
 
         Self {
             normal,
@@ -139,27 +145,27 @@ impl SquashState {
 
     pub fn update_dt(&mut self, dt: f32) -> Option<Vec2> {
         self.elapsed += dt.max(0.0);
-        if self.elapsed > self.hold_duration + 0.12 {
+        if self.elapsed > self.hold_duration + SQUASH_RECOVERY_SECS {
             return None;
         }
 
         let factor = if self.elapsed <= self.hold_duration {
             self.compression
         } else {
-            let settle = (self.elapsed - self.hold_duration) / 0.12;
-            if settle < 0.35 {
-                1.0 + (1.0 - self.compression) * 0.50
-            } else if settle < 0.68 {
-                0.97
+            let settle = (self.elapsed - self.hold_duration) / SQUASH_RECOVERY_SECS;
+            if settle < SQUASH_FIRST_SETTLE_FRACTION {
+                1.0 + (1.0 - self.compression) * SQUASH_FIRST_RECOVERY_SCALE
+            } else if settle < SQUASH_SECOND_SETTLE_FRACTION {
+                SQUASH_OVERSHOOT_SCALE
             } else {
                 1.0
             }
         };
 
         let scale = if self.normal.x.abs() > self.normal.y.abs() {
-            Vec2::new(factor, 1.0 + (1.0 - factor) * 0.60)
+            Vec2::new(factor, 1.0 + (1.0 - factor) * SQUASH_TRANSVERSE_RATIO)
         } else {
-            Vec2::new(1.0 + (1.0 - factor) * 0.60, factor)
+            Vec2::new(1.0 + (1.0 - factor) * SQUASH_TRANSVERSE_RATIO, factor)
         };
         Some(scale)
     }

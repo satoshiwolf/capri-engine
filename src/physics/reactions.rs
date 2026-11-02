@@ -1,4 +1,7 @@
-use crate::core::config::{DAZED_DURATION_SECS, SKID_DECELERATION};
+use crate::core::config::{
+    DAZED_DURATION_SECS, DAZED_STAR_CENTER_OFFSET_Y_PX, DAZED_STAR_PHASE_RATE_RAD_PER_SEC,
+    DAZED_STAR_RADIUS_X_PX, DAZED_STAR_RADIUS_Y_PX, SKID_DECELERATION, SKID_START_SPEED_PX_SEC,
+};
 use glam::Vec2;
 
 #[derive(Debug, Clone)]
@@ -15,7 +18,7 @@ impl SkidState {
         Self {
             velocity_x,
             feet_pos,
-            finished: velocity_x.abs() < 50.0,
+            finished: velocity_x.abs() < SKID_START_SPEED_PX_SEC,
         }
     }
 
@@ -58,20 +61,20 @@ impl DazedState {
 
     pub fn update(&mut self, dt: f32) -> bool {
         self.timer += dt;
-        self.star_phase += 4.5 * dt;
+        self.star_phase += DAZED_STAR_PHASE_RATE_RAD_PER_SEC * dt;
         self.timer >= self.duration
     }
 
     pub fn star_positions(&self) -> [Vec2; 4] {
         let mut stars = [Vec2::ZERO; 4];
         // The smaller vertical radius gives the orbit a tilted perspective.
-        let rx = 36.0;
-        let ry = 12.0;
-
         for (i, star) in stars.iter_mut().enumerate() {
             let offset = (i as f32) * (std::f32::consts::PI / 2.0);
             let angle = self.star_phase + offset;
-            *star = Vec2::new(angle.cos() * rx, angle.sin() * ry - 28.0);
+            *star = Vec2::new(
+                angle.cos() * DAZED_STAR_RADIUS_X_PX,
+                angle.sin() * DAZED_STAR_RADIUS_Y_PX + DAZED_STAR_CENTER_OFFSET_Y_PX,
+            );
         }
         stars
     }

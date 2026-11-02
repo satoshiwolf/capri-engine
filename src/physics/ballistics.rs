@@ -1,5 +1,10 @@
 use crate::core::config::{
-    AIR_RESISTANCE, ANIME_FRAME_SECS, LEAP_GRAVITY, RELEASE_STREAK_SECS, SKID_DECELERATION,
+    AIR_RESISTANCE, ANIME_FRAME_SECS, BOUNCE_ANGULAR_DAMP, BOUNCE_RESTITUTION_Y,
+    FLIGHT_FLOOR_ALIGN_DEG_PER_SEC, FLIGHT_HITSTOP_FRAME_BASE, FLIGHT_HITSTOP_FRAME_SCALE,
+    FLIGHT_HITSTOP_MIN_HARDNESS, FLIGHT_MAX_ANGULAR_SPEED_DEG_PER_SEC,
+    FLIGHT_OPPOSITE_HORIZONTAL_ANGLE_DEGREES, FLIGHT_REVERSAL_ANGLE_DEGREES,
+    FLIGHT_SURFACE_AXIS_THRESHOLD, FLIGHT_VERTICAL_ANGULAR_DAMP,
+    FLIGHT_ZERO_HORIZONTAL_ANGLE_DEGREES, LEAP_GRAVITY, RELEASE_STREAK_SECS, SKID_DECELERATION,
     THROW_GRAVITY, THROW_MAX_SPEED, THROW_SPIN_FROM_VX, THROW_VERTICAL_BOUNCE_X_DAMP,
 };
 use glam::Vec2;
@@ -45,11 +50,14 @@ impl FlightState {
         // Align the body with the initial throw direction for the release streak.
         let mut along = velocity.x.atan2(-velocity.y).to_degrees();
         if feet_first {
-            along += 180.0;
+            along += FLIGHT_REVERSAL_ANGLE_DEGREES;
         }
 
         // Tumbling speed follows the horizontal throw impulse.
-        let angular_velocity = (velocity.x * THROW_SPIN_FROM_VX).clamp(-900.0, 900.0);
+        let angular_velocity = (velocity.x * THROW_SPIN_FROM_VX).clamp(
+            -FLIGHT_MAX_ANGULAR_SPEED_DEG_PER_SEC,
+            FLIGHT_MAX_ANGULAR_SPEED_DEG_PER_SEC,
+        );
 
         Self {
             center,
@@ -64,9 +72,9 @@ impl FlightState {
             hit_count: 0,
             max_impact_hard: 0.0,
             lie_target_angle: if along.rem_euclid(360.0) > 180.0 {
-                270.0
+                FLIGHT_OPPOSITE_HORIZONTAL_ANGLE_DEGREES
             } else {
-                90.0
+                FLIGHT_ZERO_HORIZONTAL_ANGLE_DEGREES
             },
         }
     }
@@ -99,7 +107,10 @@ impl FlightState {
             }
             FlightPhase::FloorSlide => {
                 let angle_diff = self.lie_target_angle - self.angle;
-                self.angle += angle_diff.clamp(-540.0 * dt, 540.0 * dt);
+                self.angle += angle_diff.clamp(
+                    -FLIGHT_FLOOR_ALIGN_DEG_PER_SEC * dt,
+                    FLIGHT_FLOOR_ALIGN_DEG_PER_SEC * dt,
+                );
 
                 let brake = SKID_DECELERATION * dt;
                 if self.velocity.x.abs() <= brake {
@@ -119,19 +130,18 @@ impl FlightState {
         }
 
         // Hold for one to four frames depending on impact hardness.
-        let frames_hold = 1.0 + hard * 3.0;
-        if hard > 0.12 {
+        let frames_hold = FLIGHT_HITSTOP_FRAME_BASE + hard * FLIGHT_HITSTOP_FRAME_SCALE;
+        if hard > FLIGHT_HITSTOP_MIN_HARDNESS {
             self.freeze_timer = frames_hold * ANIME_FRAME_SECS;
         }
 
-        if normal.x.abs() > 0.5 {
+        if normal.x.abs() > FLIGHT_SURFACE_AXIS_THRESHOLD {
             self.velocity.x = -self.velocity.x * crate::core::config::BOUNCE_RESTITUTION_X;
             self.velocity.y *= THROW_VERTICAL_BOUNCE_X_DAMP;
-            self.angular_velocity =
-                -self.angular_velocity * crate::core::config::BOUNCE_ANGULAR_DAMP;
-        } else if normal.y.abs() > 0.5 {
-            self.velocity.y = -self.velocity.y * crate::core::config::BOUNCE_RESTITUTION_Y;
-            self.angular_velocity *= 0.70;
+            self.angular_velocity = -self.angular_velocity * BOUNCE_ANGULAR_DAMP;
+        } else if normal.y.abs() > FLIGHT_SURFACE_AXIS_THRESHOLD {
+            self.velocity.y = -self.velocity.y * BOUNCE_RESTITUTION_Y;
+            self.angular_velocity *= FLIGHT_VERTICAL_ANGULAR_DAMP;
         }
     }
 }

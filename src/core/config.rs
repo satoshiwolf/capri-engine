@@ -22,6 +22,10 @@ pub const AIR_RESISTANCE: f32 = 0.80;
 pub const THROW_SPIN_FROM_VX: f32 = 0.32;
 pub const THROW_VERTICAL_BOUNCE_X_DAMP: f32 = 0.85;
 pub const POINTER_VELOCITY_WINDOW_SECS: f64 = 0.08;
+pub const THROW_GRAB_MARGIN_PX: f32 = 20.0;
+pub const SLOW_RELEASE_RETENTION: f32 = 0.35;
+pub const SLOW_RELEASE_DOWN_PX_SEC: f32 = 1.0;
+pub const FACING_TURN_THRESHOLD_PX_PER_SEC: f32 = 25.0;
 
 /// Pendulum spring parameters. The angle limit is expressed in degrees.
 pub const PENDULUM_STIFFNESS: f32 = 95.0;
@@ -29,6 +33,10 @@ pub const PENDULUM_DAMPING: f32 = 8.5;
 pub const PENDULUM_MAX_ANGLE: f32 = 42.0;
 pub const PENDULUM_TARGET_DEG_PER_PX_SEC: f32 = 0.014;
 pub const PENDULUM_SPEED_NORMALIZER: f32 = 2200.0;
+pub const PENDULUM_SMEAR_THRESHOLD_PX_SEC: f32 = 80.0;
+pub const PENDULUM_SMEAR_THRESHOLD_NORMALIZED: f32 = 0.35;
+pub const PENDULUM_SMEAR_STRENGTH_PX: f32 = 20.0;
+pub const PENDULUM_MAX_HAIR_LEAN: f32 = 7.0;
 
 /// Dimensionless impulse and angular damping coefficients.
 pub const BOUNCE_RESTITUTION_X: f32 = 0.42;
@@ -37,6 +45,7 @@ pub const BOUNCE_ANGULAR_DAMP: f32 = 0.55;
 
 /// Skid deceleration in pixels per second squared and dazed duration in seconds.
 pub const SKID_DECELERATION: f32 = 2800.0;
+pub const SKID_START_SPEED_PX_SEC: f32 = 50.0;
 pub const DAZED_DURATION_SECS: f32 = 2.4;
 
 pub const DEFAULT_WS_PORT: u16 = 47823;
@@ -54,9 +63,50 @@ pub const CEILING_HANG_OFFSET_PX: f32 = 60.0;
 
 /// Cursor-ride vertical offset in screen pixels.
 pub const RIDE_CURSOR_OFFSET_PX: f32 = 86.0;
+pub const RIDE_CURSOR_TILT_DEG_PER_PX_SEC: f32 = 0.012;
+pub const RIDE_CURSOR_MAX_TILT_DEGREES: f32 = 24.0;
 
 /// Time spent sitting before the avatar settles into the lay-down loop.
 pub const SIT_TO_LAYDOWN_SECS: f32 = 60.0;
+
+/// Collision and landing thresholds in pixels, pixels per second, or degrees.
+pub const WALL_IMPACT_MIN_SPEED_PX_SEC: f32 = 250.0;
+pub const WALL_IMPACT_MAX_SPEED_PX_SEC: f32 = 2300.0;
+pub const FLOOR_SURFACE_OFFSET_PX: f32 = 2.0;
+pub const LEDGE_LANDING_TOLERANCE_PX: f32 = 10.0;
+pub const UPRIGHT_ANGLE_MARGIN_DEGREES: f32 = 35.0;
+pub const LANDING_SKID_MAX_VY_PX_SEC: f32 = 1200.0;
+pub const LANDING_IMPACT_SPEED_NORMALIZER: f32 = 2400.0;
+
+/// Flight orientation and collision-response tuning.
+pub const FLIGHT_REVERSAL_ANGLE_DEGREES: f32 = 180.0;
+pub const FLIGHT_MAX_ANGULAR_SPEED_DEG_PER_SEC: f32 = 900.0;
+pub const FLIGHT_FLOOR_ALIGN_DEG_PER_SEC: f32 = 540.0;
+pub const FLIGHT_ZERO_HORIZONTAL_ANGLE_DEGREES: f32 = 90.0;
+pub const FLIGHT_OPPOSITE_HORIZONTAL_ANGLE_DEGREES: f32 = 270.0;
+pub const FLIGHT_HITSTOP_MIN_HARDNESS: f32 = 0.12;
+pub const FLIGHT_HITSTOP_FRAME_BASE: f32 = 1.0;
+pub const FLIGHT_HITSTOP_FRAME_SCALE: f32 = 3.0;
+pub const FLIGHT_SURFACE_AXIS_THRESHOLD: f32 = 0.5;
+pub const FLIGHT_VERTICAL_ANGULAR_DAMP: f32 = 0.70;
+
+/// Squash and stretch response and recovery timing.
+pub const SQUASH_MIN_COMPRESSION: f32 = 0.84;
+pub const SQUASH_COMPRESSION_RANGE: f32 = 0.30;
+pub const SQUASH_TRANSVERSE_RATIO: f32 = 0.60;
+pub const SQUASH_HOLD_FRAME_BASE: f32 = 1.0;
+pub const SQUASH_HOLD_FRAME_SCALE: f32 = 4.0;
+pub const SQUASH_RECOVERY_SECS: f32 = 0.12;
+pub const SQUASH_FIRST_SETTLE_FRACTION: f32 = 0.35;
+pub const SQUASH_SECOND_SETTLE_FRACTION: f32 = 0.68;
+pub const SQUASH_FIRST_RECOVERY_SCALE: f32 = 0.50;
+pub const SQUASH_OVERSHOOT_SCALE: f32 = 0.97;
+
+/// Dazed star orbit geometry and angular cadence.
+pub const DAZED_STAR_RADIUS_X_PX: f32 = 36.0;
+pub const DAZED_STAR_RADIUS_Y_PX: f32 = 12.0;
+pub const DAZED_STAR_CENTER_OFFSET_Y_PX: f32 = -28.0;
+pub const DAZED_STAR_PHASE_RATE_RAD_PER_SEC: f32 = 4.5;
 
 /// Maximum resident alpha-mask payload for decoded sprite clips.
 pub const MAX_SPRITE_RESIDENT_BYTES: usize = 25 * 1024 * 1024;

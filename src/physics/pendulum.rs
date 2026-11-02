@@ -1,6 +1,7 @@
 use crate::core::config::{
-    PENDULUM_DAMPING, PENDULUM_MAX_ANGLE, PENDULUM_SPEED_NORMALIZER, PENDULUM_STIFFNESS,
-    PENDULUM_TARGET_DEG_PER_PX_SEC,
+    PENDULUM_DAMPING, PENDULUM_MAX_ANGLE, PENDULUM_MAX_HAIR_LEAN, PENDULUM_SMEAR_STRENGTH_PX,
+    PENDULUM_SMEAR_THRESHOLD_NORMALIZED, PENDULUM_SMEAR_THRESHOLD_PX_SEC,
+    PENDULUM_SPEED_NORMALIZER, PENDULUM_STIFFNESS, PENDULUM_TARGET_DEG_PER_PX_SEC,
 };
 use glam::Vec2;
 
@@ -42,12 +43,13 @@ impl PendulumState {
         self.angle += self.angular_velocity * dt;
 
         let speed = cursor_velocity.length();
-        if speed > 80.0 {
+        if speed > PENDULUM_SMEAR_THRESHOLD_PX_SEC {
             let dir = cursor_velocity.normalize();
             let k = (speed / PENDULUM_SPEED_NORMALIZER).clamp(0.0, 1.0);
-            self.hair_lean = (-dir.x * 7.0 * k).clamp(-7.0, 7.0);
-            if k > 0.35 {
-                self.smear_offset = -dir * 20.0 * k;
+            self.hair_lean = (-dir.x * PENDULUM_MAX_HAIR_LEAN * k)
+                .clamp(-PENDULUM_MAX_HAIR_LEAN, PENDULUM_MAX_HAIR_LEAN);
+            if k > PENDULUM_SMEAR_THRESHOLD_NORMALIZED {
+                self.smear_offset = -dir * PENDULUM_SMEAR_STRENGTH_PX * k;
             } else {
                 self.smear_offset = Vec2::ZERO;
             }

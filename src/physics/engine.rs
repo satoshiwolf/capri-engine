@@ -2,9 +2,13 @@ use glam::Vec2;
 use std::collections::VecDeque;
 
 use crate::core::config::{
-    CEILING_HANG_OFFSET_PX, FEET_POINT, MID_POINT, POINTER_VELOCITY_WINDOW_SECS,
-    RIDE_CURSOR_OFFSET_PX, SIT_TO_LAYDOWN_SECS, SPRITE_HEIGHT, SPRITE_WIDTH, THROW_MAX_SPEED,
-    THROW_MIN_SPEED,
+    CEILING_HANG_OFFSET_PX, FACING_TURN_THRESHOLD_PX_PER_SEC, FEET_POINT, FLOOR_SURFACE_OFFSET_PX,
+    LANDING_IMPACT_SPEED_NORMALIZER, LANDING_SKID_MAX_VY_PX_SEC, LEDGE_LANDING_TOLERANCE_PX,
+    MID_POINT, POINTER_VELOCITY_WINDOW_SECS, RIDE_CURSOR_MAX_TILT_DEGREES, RIDE_CURSOR_OFFSET_PX,
+    RIDE_CURSOR_TILT_DEG_PER_PX_SEC, SIT_TO_LAYDOWN_SECS, SLOW_RELEASE_DOWN_PX_SEC,
+    SLOW_RELEASE_RETENTION, SPRITE_HEIGHT, SPRITE_WIDTH, THROW_GRAB_MARGIN_PX, THROW_MAX_SPEED,
+    THROW_MIN_SPEED, UPRIGHT_ANGLE_MARGIN_DEGREES, WALL_IMPACT_MAX_SPEED_PX_SEC,
+    WALL_IMPACT_MIN_SPEED_PX_SEC,
 };
 use crate::core::events::EngineEvent;
 use crate::core::state::{Facing, Stance};
@@ -70,8 +74,12 @@ impl PhysicsEngine {
         let local_grab = self.visual_transform().screen_to_local(cursor_pos) + MID_POINT;
 
         let grab_point = Vec2::new(
-            local_grab.x.clamp(20.0, SPRITE_WIDTH - 20.0),
-            local_grab.y.clamp(20.0, SPRITE_HEIGHT - 20.0),
+            local_grab
+                .x
+                .clamp(THROW_GRAB_MARGIN_PX, SPRITE_WIDTH - THROW_GRAB_MARGIN_PX),
+            local_grab
+                .y
+                .clamp(THROW_GRAB_MARGIN_PX, SPRITE_HEIGHT - THROW_GRAB_MARGIN_PX),
         );
 
         self.pendulum = Some(PendulumState::new(grab_point));
@@ -118,7 +126,7 @@ impl PhysicsEngine {
                 .visual_transform()
                 .local_delta_to_screen(grab_point - MID_POINT);
             self.center_pos = cursor_pos - grab_offset;
-            if cursor_velocity.x.abs() > 25.0 {
+            if cursor_velocity.x.abs() > FACING_TURN_THRESHOLD_PX_PER_SEC {
                 self.facing = if cursor_velocity.x < 0.0 {
                     Facing::Left
                 } else {
@@ -151,7 +159,7 @@ impl PhysicsEngine {
             let flight = FlightState::new_throw(self.center_pos, velocity, feet_first);
             let speed_val = flight.velocity.length();
             self.rotation = flight.angle;
-            if velocity.x.abs() > 25.0 {
+            if velocity.x.abs() > FACING_TURN_THRESHOLD_PX_PER_SEC {
                 self.facing = if velocity.x < 0.0 {
                     Facing::Left
                 } else {
@@ -169,7 +177,7 @@ impl PhysicsEngine {
             self.rotation = 0.0;
             self.flight = Some(FlightState::new_throw(
                 self.center_pos,
-                velocity * 0.35 + Vec2::new(0.0, 1.0),
+                velocity * SLOW_RELEASE_RETENTION + Vec2::new(0.0, SLOW_RELEASE_DOWN_PX_SEC),
                 feet_first,
             ));
             EngineEvent::Dropped {
@@ -183,9 +191,10 @@ impl PhysicsEngine {
             return;
         }
         self.center_pos = cursor_pos + Vec2::new(0.0, RIDE_CURSOR_OFFSET_PX);
-        self.rotation = (cursor_velocity.x * 0.012).clamp(-24.0, 24.0);
+        self.rotation = (cursor_velocity.x * RIDE_CURSOR_TILT_DEG_PER_PX_SEC)
+            .clamp(-RIDE_CURSOR_MAX_TILT_DEGREES, RIDE_CURSOR_MAX_TILT_DEGREES);
         self.squash_scale = Vec2::ONE;
-        if cursor_velocity.x.abs() > 25.0 {
+        if cursor_velocity.x.abs() > FACING_TURN_THRESHOLD_PX_PER_SEC {
             self.facing = if cursor_velocity.x < 0.0 {
                 Facing::Left
             } else {
@@ -350,7 +359,9 @@ impl PhysicsEngine {
                     if flight.center.x + reach.min_x < screen_left && flight.velocity.x < 0.0 {
                         flight.center.x = screen_left - reach.min_x;
                         let impact_speed = flight.velocity.length();
-                        let hard = (flight.velocity.x.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
+                        let hard = (flight.velocity.x.abs() - WALL_IMPACT_MIN_SPEED_PX_SEC)
+                            .clamp(0.0, WALL_IMPACT_MAX_SPEED_PX_SEC)
+                            / WALL_IMPACT_MAX_SPEED_PX_SEC;
                         flight.bounce(Vec2::new(1.0, 0.0), hard);
                         impact_squash = Some((Vec2::new(1.0, 0.0), hard));
                         events.push(EngineEvent::Impact {
@@ -364,7 +375,9 @@ impl PhysicsEngine {
                     {
                         flight.center.x = screen_right - reach.max_x;
                         let impact_speed = flight.velocity.length();
-                        let hard = (flight.velocity.x.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
+                        let hard = (flight.velocity.x.abs() - WALL_IMPACT_MIN_SPEED_PX_SEC)
+                            .clamp(0.0, WALL_IMPACT_MAX_SPEED_PX_SEC)
+                            / WALL_IMPACT_MAX_SPEED_PX_SEC;
                         flight.bounce(Vec2::new(-1.0, 0.0), hard);
                         impact_squash = Some((Vec2::new(-1.0, 0.0), hard));
                         events.push(EngineEvent::Impact {
@@ -378,7 +391,9 @@ impl PhysicsEngine {
                     if flight.center.y + reach.min_y < screen_top && flight.velocity.y < 0.0 {
                         flight.center.y = screen_top - reach.min_y;
                         let impact_speed = flight.velocity.length();
-                        let hard = (flight.velocity.y.abs() - 250.0).clamp(0.0, 2300.0) / 2300.0;
+                        let hard = (flight.velocity.y.abs() - WALL_IMPACT_MIN_SPEED_PX_SEC)
+                            .clamp(0.0, WALL_IMPACT_MAX_SPEED_PX_SEC)
+                            / WALL_IMPACT_MAX_SPEED_PX_SEC;
                         flight.bounce(Vec2::new(0.0, 1.0), hard);
                         impact_squash = Some((Vec2::new(0.0, 1.0), hard));
                         events.push(EngineEvent::Impact {
@@ -389,7 +404,7 @@ impl PhysicsEngine {
                         });
                     }
 
-                    let ground_y = screen_bottom - 2.0;
+                    let ground_y = screen_bottom - FLOOR_SURFACE_OFFSET_PX;
                     let feet_y = flight.center.y + reach.max_y;
 
                     let mut hit_surface = None;
@@ -397,7 +412,8 @@ impl PhysicsEngine {
                         for ledge in ledges {
                             if ledge.contains_x(flight.center.x, SPRITE_WIDTH * 0.25)
                                 && feet_y >= ledge.y
-                                && feet_y - flight.velocity.y * dt <= ledge.y + 10.0
+                                && feet_y - flight.velocity.y * dt
+                                    <= ledge.y + LEDGE_LANDING_TOLERANCE_PX
                             {
                                 hit_surface = Some(ledge.clone());
                                 break;
@@ -411,7 +427,8 @@ impl PhysicsEngine {
 
                     if let Some(target_y) = target_y {
                         let upright = flight.angle.rem_euclid(360.0);
-                        let is_upright = upright < 35.0 || upright > 325.0;
+                        let is_upright = upright < UPRIGHT_ANGLE_MARGIN_DEGREES
+                            || upright > 360.0 - UPRIGHT_ANGLE_MARGIN_DEGREES;
                         let vy = flight.velocity.y;
                         let vx = flight.velocity.x;
                         let speed = flight.velocity.length();
@@ -435,9 +452,12 @@ impl PhysicsEngine {
                 {
                     self.center_pos.y = target_y - reach_max_y;
                     self.flight = None;
-                    self.apply_squash(Vec2::new(0.0, 1.0), (vy / 2400.0).clamp(0.0, 1.0));
+                    self.apply_squash(
+                        Vec2::new(0.0, 1.0),
+                        (vy / LANDING_IMPACT_SPEED_NORMALIZER).clamp(0.0, 1.0),
+                    );
 
-                    if is_upright && vy < 1200.0 {
+                    if is_upright && vy < LANDING_SKID_MAX_VY_PX_SEC {
                         self.center_pos.y = target_y - (FEET_POINT.y - MID_POINT.y) * self.scale;
                         self.stance = Stance::Skid;
                         self.rotation = 0.0;
