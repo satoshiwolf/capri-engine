@@ -1,6 +1,6 @@
 use arc_swap::ArcSwapOption;
 use glam::Vec2;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::DirectComposition::{
@@ -66,15 +66,13 @@ pub struct OverlayInput {
     cursor_y: Arc<AtomicI32>,
     mouse_down: Arc<AtomicBool>,
     capture_input: Arc<AtomicBool>,
-    hit_mask: Arc<ArcSwapOption<AlphaBitmask>>,
-    hit_center_x: Arc<AtomicU32>,
-    hit_center_y: Arc<AtomicU32>,
-    hit_rotation: Arc<AtomicU32>,
-    hit_scale_x: Arc<AtomicU32>,
-    hit_scale_y: Arc<AtomicU32>,
-    hit_pivot_x: Arc<AtomicU32>,
-    hit_pivot_y: Arc<AtomicU32>,
-    hit_facing: Arc<AtomicI32>,
+    hit_test: Arc<ArcSwapOption<HitTestSnapshot>>,
+}
+
+struct HitTestSnapshot {
+    mask: Option<Arc<AlphaBitmask>>,
+    transform: VisualTransform,
+    pivot: Vec2,
 }
 
 impl OverlayInput {
@@ -84,15 +82,7 @@ impl OverlayInput {
             cursor_y: Arc::new(AtomicI32::new(0)),
             mouse_down: Arc::new(AtomicBool::new(false)),
             capture_input: Arc::new(AtomicBool::new(false)),
-            hit_mask: Arc::new(ArcSwapOption::empty()),
-            hit_center_x: Arc::new(AtomicU32::new(0.0f32.to_bits())),
-            hit_center_y: Arc::new(AtomicU32::new(0.0f32.to_bits())),
-            hit_rotation: Arc::new(AtomicU32::new(0.0f32.to_bits())),
-            hit_scale_x: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            hit_scale_y: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            hit_pivot_x: Arc::new(AtomicU32::new(0.0f32.to_bits())),
-            hit_pivot_y: Arc::new(AtomicU32::new(0.0f32.to_bits())),
-            hit_facing: Arc::new(AtomicI32::new(1)),
+            hit_test: Arc::new(ArcSwapOption::empty()),
         }
     }
 
@@ -111,59 +101,63 @@ impl OverlayInput {
         self.capture_input.store(capture, Ordering::Release);
     }
 
+    #[deprecated(
+        since = "0.3.35",
+        note = "Use `set_hit_test()` so mask and transform are published atomically. This method will be removed in 0.4.0."
+    )]
     pub fn set_hit_test_mask(&self, mask: Option<Arc<AlphaBitmask>>) {
-        self.hit_mask.store(mask);
+        let current = self.hit_test.load();
+        let transform = current
+            .as_ref()
+            .map_or_else(default_hit_transform, |snapshot| snapshot.transform);
+        let pivot = current
+            .as_ref()
+            .map_or(Vec2::ZERO, |snapshot| snapshot.pivot);
+        self.set_hit_test(mask, transform, pivot);
     }
 
+    #[deprecated(
+        since = "0.3.35",
+        note = "Use `set_hit_test()` so mask and transform are published atomically. This method will be removed in 0.4.0."
+    )]
     pub fn set_hit_test_transform(&self, transform: VisualTransform, pivot: Vec2) {
-        self.hit_center_x
-            .store(transform.center.x.to_bits(), Ordering::Release);
-        self.hit_center_y
-            .store(transform.center.y.to_bits(), Ordering::Release);
-        self.hit_rotation
-            .store(transform.rotation_degrees.to_bits(), Ordering::Release);
-        self.hit_scale_x
-            .store(transform.scale.x.to_bits(), Ordering::Release);
-        self.hit_scale_y
-            .store(transform.scale.y.to_bits(), Ordering::Release);
-        self.hit_pivot_x.store(pivot.x.to_bits(), Ordering::Release);
-        self.hit_pivot_y.store(pivot.y.to_bits(), Ordering::Release);
-        self.hit_facing
-            .store(transform.facing.as_f32() as i32, Ordering::Release);
+        let mask = self
+            .hit_test
+            .load_full()
+            .and_then(|snapshot| snapshot.mask.clone());
+        self.set_hit_test(mask, transform, pivot);
+    }
+
+    pub fn set_hit_test(
+        &self,
+        mask: Option<Arc<AlphaBitmask>>,
+        transform: VisualTransform,
+        pivot: Vec2,
+    ) {
+        self.hit_test.store(Some(Arc::new(HitTestSnapshot {
+            mask,
+            transform,
+            pivot,
+        })));
     }
 
     pub fn hit_test(&self, screen_point: Vec2) -> bool {
-        let Some(mask) = self.hit_mask.load_full() else {
+        let Some(snapshot) = self.hit_test.load_full() else {
             return false;
         };
-        let facing = if self.hit_facing.load(Ordering::Acquire) < 0 {
-            Facing::Left
-        } else {
-            Facing::Right
-        };
-        let transform = VisualTransform::new(
-            Vec2::new(
-                f32::from_bits(self.hit_center_x.load(Ordering::Acquire)),
-                f32::from_bits(self.hit_center_y.load(Ordering::Acquire)),
-            ),
-            f32::from_bits(self.hit_rotation.load(Ordering::Acquire)),
-            Vec2::new(
-                f32::from_bits(self.hit_scale_x.load(Ordering::Acquire)),
-                f32::from_bits(self.hit_scale_y.load(Ordering::Acquire)),
-            ),
-            facing,
-        );
-        let pivot = Vec2::new(
-            f32::from_bits(self.hit_pivot_x.load(Ordering::Acquire)),
-            f32::from_bits(self.hit_pivot_y.load(Ordering::Acquire)),
-        );
-        mask.hit_test_transformed(screen_point, transform, pivot)
+        snapshot.mask.as_ref().is_some_and(|mask| {
+            mask.hit_test_transformed(screen_point, snapshot.transform, snapshot.pivot)
+        })
     }
 
     fn set_cursor(&self, point: POINT) {
         self.cursor_x.store(point.x, Ordering::Relaxed);
         self.cursor_y.store(point.y, Ordering::Relaxed);
     }
+}
+
+fn default_hit_transform() -> VisualTransform {
+    VisualTransform::new(Vec2::ZERO, 0.0, Vec2::ONE, Facing::Right)
 }
 
 impl Default for OverlayInput {
@@ -706,8 +700,7 @@ mod tests {
         let transform =
             VisualTransform::new(Vec2::new(100.0, 100.0), 0.0, Vec2::ONE, Facing::Right);
 
-        input.set_hit_test_mask(Some(Arc::new(mask)));
-        input.set_hit_test_transform(transform, Vec2::new(10.0, 10.0));
+        input.set_hit_test(Some(Arc::new(mask)), transform, Vec2::new(10.0, 10.0));
 
         assert!(input.hit_test(Vec2::new(100.0, 100.0)));
         assert!(!input.hit_test(Vec2::new(100.0, 80.0)));

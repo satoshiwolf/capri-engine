@@ -32,8 +32,7 @@ fn main() {
     );
     let pivot = Vec2::new(118.0, 232.0);
     let input = OverlayInput::new();
-    input.set_hit_test_mask(Some(Arc::new(mask)));
-    input.set_hit_test_transform(transform, pivot);
+    input.set_hit_test(Some(Arc::new(mask)), transform, pivot);
 
     for index in 0..20_000 {
         let point = sample_point(index);

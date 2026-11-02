@@ -28,7 +28,7 @@ use capri_engine::physics::{PhysicsSnapshot, PhysicsWorker};
 use capri_engine::render::animation::{
     AnimationAction, AnimationController, AnimationInput, AnimationSample, ClipCatalog, ClipId,
 };
-use capri_engine::render::hittest::create_default_mask;
+use capri_engine::render::hittest::{AlphaBitmask, create_default_mask};
 use capri_engine::render::pipeline::{Renderer, SpriteInstance};
 use capri_engine::render::sprites::SpriteManager;
 use capri_engine::render::vfx::VfxSystem;
@@ -112,7 +112,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.34 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.35 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -182,6 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frame_metrics = FrameMetrics::new(METRICS_SAMPLE_CAPACITY);
     let mut reported_stance = physics.stance();
     let mut last_hit_mask_key = None;
+    let mut hit_mask_cache: Option<Arc<AlphaBitmask>> = None;
     let mut last_body = RenderedBody {
         clip: ClipId::Idle,
         flipped: false,
@@ -234,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if hit_mask_key != last_hit_mask_key {
             last_hit_mask_key = hit_mask_key;
             let mask = hit_mask.unwrap_or(&default_mask).clone();
-            overlay.input().set_hit_test_mask(Some(Arc::new(mask)));
+            hit_mask_cache = Some(Arc::new(mask));
         }
         let input_transform = VisualTransform {
             scale: input_transform.scale * input_scale,
@@ -242,7 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         overlay
             .input()
-            .set_hit_test_transform(input_transform, input_pivot);
+            .set_hit_test(hit_mask_cache.clone(), input_transform, input_pivot);
         let is_over_capri = overlay.input().hit_test(cursor_screen);
         let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance());
         overlay.input().set_capture_input(capture_input);
