@@ -18,7 +18,7 @@
 
 Capri Engine implementa una arquitectura desacoplada donde el motor de simulacion fisica y renderizado nativo opera como un proceso independiente de alto rendimiento (el cuerpo fisico), comunicandose con los agentes externos de inteligencia artificial, servicios de voz (TTS) y herramientas de desarrollo exclusivamente a traves de una pasarela WebSocket loopback (`ws://127.0.0.1:47823`).
 
-Esta separacion garantiza que la simulacion fisica y la interactividad en el escritorio se mantengan fluidas a 60/120 FPS sin bloqueos, independientemente del tiempo de procesamiento o inferencia de los sistemas cognitivos externos.
+La simulacion fisica usa un worker dedicado con pasos fijos de 60/120 Hz, separado del render y de los sistemas cognitivos externos.
 
 ```mermaid
 flowchart TB
@@ -34,7 +34,7 @@ flowchart TB
 
     subgraph CAPRI_HOST["capri-engine (Rust - El Cuerpo Fisico)"]
         FSM["Maquina de Estados (Stance: Stand, Held, Fly, Skid, Dazed, Upside)"]
-        PHYSICS["Motor de Fisicas Balisticas (60/120 Hz)\n- Pendulo inercial al arrastrar\n- Lanzamiento balistico parabolico\n- Hit-stop, Squash & Stretch y Rebotes\n- Derrape ninja con chispas y K.O."]
+        PHYSICS["Worker de Fisica Balistica (paso fijo 60/120 Hz)\n- Pendulo inercial al arrastrar\n- Lanzamiento balistico parabolico\n- Hit-stop, Squash & Stretch y Rebotes\n- Derrape ninja con chispas y K.O."]
         DESKTOP["Integracion de Escritorio Win32\n- Algoritmo de repisas (Ledges) con recorte Z-order\n- Topologia multi-monitor y cruce fluido"]
         RENDER["Overlay Transparente de Escritorio\n- WS_EX_NOREDIRECTIONBITMAP\n- Hit-testing de opacidad por pixel (< 0.01 ms)\n- Atlas de sprites y particulas de impacto (VFX)"]
     end
@@ -49,7 +49,7 @@ flowchart TB
 ```
 
 ### Ventajas de esta Arquitectura:
-- **Disenado para interaccion fluida**: El render sigue VSync con un objetivo configurable de 60/120 Hz. Los datos de sprites residentes apuntan a 25 MiB; la memoria total del proceso y del driver grafico se mide por separado.
+- **Disenado para interaccion fluida**: El render sigue VSync con un objetivo configurable de 60/120 Hz y la fisica avanza en pasos fijos sobre un worker dedicado. Las metricas reportan percentiles de frame time, jitter y memoria residente de mascaras alfa.
 - **Libertad poliglota**: Tu agente puede estar escrito en Python, TypeScript, Go o C#; solo necesita enviar y recibir JSON por WebSocket.
 - **Aislamiento contra fallos**: Si el modelo de IA demora en generar una respuesta o el TTS falla, Capri sigue balanceandose, rebotando y sentandose de forma natural en tu escritorio.
 
@@ -292,6 +292,10 @@ cargo run --release
 ```
 
 El objetivo de render usa 60 Hz por defecto. Define `CAPRI_TARGET_FPS=120` para solicitar la cadencia de 120 Hz en pantallas compatibles.
+
+El worker de fisica usa la misma seleccion de 60/120 Hz con un reloj de pasos
+fijos. Al cerrar, el motor registra una linea `[METRICS]` con promedio, p95,
+maximo, jitter y memoria residente de mascaras alfa.
 
 La pasarela loopback admite hasta 16 clientes concurrentes y 256 KiB por mensaje.
 Define `CAPRI_GATEWAY_TOKEN` para exigir `Authorization: Bearer <token>` y

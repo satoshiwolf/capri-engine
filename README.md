@@ -10,7 +10,7 @@
 
 > **Capri Engine** is the **Embodied Desktop Host & Physics Canvas** for **Capri** (*Project Capricorn*, from *Cyberpunk: Edgerunners*).
 >
-> Built in **native Rust** with a modular, service-oriented architecture, it fully decouples high-frequency physical simulation and transparent window rendering from the artificial intelligence brain (LLM) and voice services (TTS/STT).
+> Built in **native Rust** with a modular, service-oriented architecture, it separates the fixed-step physics worker, transparent window rendering, and the external artificial intelligence and voice services.
 
 ---
 
@@ -34,7 +34,7 @@ flowchart TB
 
     subgraph CAPRI_HOST["capri-engine (Rust - The Physical Body)"]
         FSM["State Machine (Stance: Stand, Held, Fly, Skid, Dazed, Upside)"]
-        PHYSICS["Ballistic Physics Engine (60/120 Hz)\n- Inertial drag pendulum\n- Parabolic ballistic throw\n- Hit-stop, Squash & Stretch and Bounces\n- Ninja skid with sparks and K.O."]
+        PHYSICS["Dedicated Ballistic Physics Worker (fixed 60/120 Hz)\n- Inertial drag pendulum\n- Parabolic ballistic throw\n- Hit-stop, Squash & Stretch and Bounces\n- Ninja skid with sparks and K.O."]
         DESKTOP["Win32 Desktop Integration\n- Ledges Engine with Z-order clipping\n- Multi-monitor topology & seamless crossover"]
         RENDER["Transparent Desktop Overlay\n- WS_EX_NOREDIRECTIONBITMAP\n- Per-pixel opacity hit-testing (< 0.01 ms)\n- Sprite atlas and impact particle VFX"]
     end
@@ -49,7 +49,7 @@ flowchart TB
 ```
 
 ### Architecture Benefits:
-- **Designed for fluid interaction**: Rendering follows display VSync at a configurable 60/120 Hz target. Engine-owned sprite residency targets 25 MiB; total process and GPU-driver memory are measured separately.
+- **Designed for fluid interaction**: Rendering follows display VSync at a configurable 60/120 Hz target while physics advances through fixed steps on a dedicated worker. Runtime metrics report frame-time percentiles, jitter, and resident alpha-mask memory.
 - **Polyglot flexibility**: Your agent can be written in Python, TypeScript, Go, or C#; it only needs to exchange JSON over WebSocket.
 - **Fault isolation**: If the AI model takes seconds to respond or TTS fails, Capri keeps swaying, bouncing, and sitting naturally on your desktop without stuttering.
 
@@ -292,6 +292,10 @@ cargo run --release
 ```
 
 The render target defaults to 60 Hz. Set `CAPRI_TARGET_FPS=120` to request the 120 Hz cadence on compatible displays.
+
+The physics worker uses the same 60/120 Hz selection with a fixed-step clock.
+On shutdown, the engine logs a `[METRICS]` line with average, p95, maximum,
+jitter, and resident alpha-mask memory.
 
 The loopback gateway is limited to 16 concurrent clients and 256 KiB per message.
 Set `CAPRI_GATEWAY_TOKEN` to require `Authorization: Bearer <token>`. Browser
