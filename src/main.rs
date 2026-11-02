@@ -9,8 +9,10 @@ use glam::Vec2;
 use tokio::sync::{broadcast, mpsc as tokio_mpsc};
 
 use capri_engine::core::config::{
-    DEFAULT_RENDER_HZ, DEFAULT_WS_PORT, GATEWAY_COMMAND_CAPACITY, GATEWAY_EVENT_CAPACITY,
-    LEDGE_SCAN_INTERVAL_MS, SKID_LEAN_PER_PX_SEC, SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
+    DEFAULT_RENDER_HZ, DEFAULT_WS_PORT, DIZZY_VFX_OFFSET_Y_PX, GATEWAY_COMMAND_CAPACITY,
+    GATEWAY_EVENT_CAPACITY, IMPACT_HARDNESS_NORMALIZER_PX_SEC, IMPACT_SPARK_COUNT,
+    LEDGE_SCAN_INTERVAL_MS, MOUTH_GLITCH_SCALE, SKID_LANDING_SPARK_COUNT, SKID_LEAN_PER_PX_SEC,
+    SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
 };
 use capri_engine::core::events::EngineEvent;
 use capri_engine::core::state::{Emotion, Facing, Stance};
@@ -108,7 +110,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.26 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.27 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -339,8 +341,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = &event
             {
-                let hard = (*speed / 2000.0).clamp(0.0, 1.0);
-                vfx.emit_sparks(*point, 12, *normal);
+                let hard = (*speed / IMPACT_HARDNESS_NORMALIZER_PX_SEC).clamp(0.0, 1.0);
+                vfx.emit_sparks(*point, IMPACT_SPARK_COUNT, *normal);
                 vfx.emit_cracks(*point, *normal, hard);
                 vfx.emit_shockwave(*point, hard);
             }
@@ -351,14 +353,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 vfx.emit_sparks(
                     Vec2::new(physics.center_pos().x, *surface_y),
-                    8,
+                    SKID_LANDING_SPARK_COUNT,
                     Vec2::new(-1.0, 0.0),
                 );
             }
         }
 
         if physics.stance() == Stance::Dazed && !was_dazed {
-            vfx.emit_dizzy(physics.center_pos() + Vec2::new(0.0, -72.0));
+            vfx.emit_dizzy(physics.center_pos() + Vec2::new(0.0, DIZZY_VFX_OFFSET_Y_PX));
         }
         was_dazed = physics.stance() == Stance::Dazed;
         if physics.stance() == Stance::Skid
@@ -449,7 +451,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                         spec.pivot,
                     );
-                    mouth.glitch = sample.glitch * 0.35;
+                    mouth.glitch = sample.glitch * MOUTH_GLITCH_SCALE;
                     mouth.mirror_uv = physics.facing() == Facing::Left && !body_flipped;
                     mouth
                 })

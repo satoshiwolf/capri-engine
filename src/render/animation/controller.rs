@@ -4,8 +4,13 @@ use super::catalog::{ClipCatalog, ClipId, LoopMode, base_clip_for_stance};
 use crate::core::config::{
     AMBIENT_GLITCH_MAX_SECS, AMBIENT_GLITCH_MIN_SECS, BLINK_CHANCE, GLITCH_BLINK_CHANCE,
     IMPACT_FLASH_DECAY, IMPACT_FLASH_DURATION_SECS, IMPACT_GLITCH_DECAY,
-    IMPACT_GLITCH_DURATION_SECS, LIP_SYNC_HOLD_SECS, THROW_MAX_SPEED, VISUAL_SMEAR_MAX_OFFSET,
-    VISUAL_SMEAR_MAX_SPEED, VISUAL_SMEAR_MIN_SPEED,
+    IMPACT_GLITCH_DURATION_SECS, LIP_SYNC_HOLD_SECS, THROW_MAX_SPEED, VISUAL_ECHO_OFFSET_PX,
+    VISUAL_ECHO_SPEED_RATIO, VISUAL_FELL_GLITCH_SECS, VISUAL_GRAB_FLASH_SECS,
+    VISUAL_GRAB_GLITCH_SECS, VISUAL_HARD_LANDING_FLASH_SECS, VISUAL_IMPACT_DURATION_BIAS,
+    VISUAL_IMPACT_HARDNESS_NORMALIZER_PX_SEC, VISUAL_RELEASE_SMEAR_BOOST,
+    VISUAL_SKID_LANDING_FLASH_SECS, VISUAL_SMEAR_MAX_OFFSET, VISUAL_SMEAR_MAX_SPEED,
+    VISUAL_SMEAR_MIN_SPEED, VISUAL_THROW_FLASH_BASE_SECS, VISUAL_THROW_FLASH_SPEED_SECS,
+    VISUAL_THROW_GLITCH_BASE_SECS, VISUAL_THROW_GLITCH_SPEED_SECS,
 };
 use crate::core::events::EngineEvent;
 use crate::core::state::{Emotion, Facing, Stance};
@@ -204,24 +209,36 @@ impl AnimationController {
     pub fn on_engine_event(&mut self, event: &EngineEvent) {
         match event {
             EngineEvent::Grabbed { .. } => {
-                self.flash = self.flash.max(0.18);
-                self.glitch = self.glitch.max(0.16);
+                self.flash = self.flash.max(VISUAL_GRAB_FLASH_SECS);
+                self.glitch = self.glitch.max(VISUAL_GRAB_GLITCH_SECS);
             }
             EngineEvent::Thrown { speed, .. } => {
                 let hard = (*speed / THROW_MAX_SPEED).clamp(0.0, 1.0);
-                self.flash = self.flash.max(0.12 + hard * 0.22);
-                self.glitch = self.glitch.max(0.20 + hard * 0.30);
+                self.flash = self
+                    .flash
+                    .max(VISUAL_THROW_FLASH_BASE_SECS + hard * VISUAL_THROW_FLASH_SPEED_SECS);
+                self.glitch = self
+                    .glitch
+                    .max(VISUAL_THROW_GLITCH_BASE_SECS + hard * VISUAL_THROW_GLITCH_SPEED_SECS);
             }
             EngineEvent::Impact { speed, .. } => {
-                let hard = (*speed / 2400.0).clamp(0.0, 1.0);
-                self.flash = self.flash.max(IMPACT_FLASH_DURATION_SECS * (0.45 + hard));
-                self.glitch = self.glitch.max(IMPACT_GLITCH_DURATION_SECS * (0.45 + hard));
+                let hard = (*speed / VISUAL_IMPACT_HARDNESS_NORMALIZER_PX_SEC).clamp(0.0, 1.0);
+                self.flash = self
+                    .flash
+                    .max(IMPACT_FLASH_DURATION_SECS * (VISUAL_IMPACT_DURATION_BIAS + hard));
+                self.glitch = self
+                    .glitch
+                    .max(IMPACT_GLITCH_DURATION_SECS * (VISUAL_IMPACT_DURATION_BIAS + hard));
             }
             EngineEvent::Landed { skid, .. } => {
-                self.flash = self.flash.max(if *skid { 0.12 } else { 0.20 });
+                self.flash = self.flash.max(if *skid {
+                    VISUAL_SKID_LANDING_FLASH_SECS
+                } else {
+                    VISUAL_HARD_LANDING_FLASH_SECS
+                });
             }
             EngineEvent::Fell => {
-                self.glitch = self.glitch.max(0.22);
+                self.glitch = self.glitch.max(VISUAL_FELL_GLITCH_SECS);
             }
             EngineEvent::Dropped { .. }
             | EngineEvent::MonitorChanged { .. }
@@ -242,13 +259,18 @@ impl AnimationController {
         } else {
             Vec2::ZERO
         };
-        let release_boost = if self.release_streak { 1.35 } else { 1.0 };
-        let smear = -direction * VISUAL_SMEAR_MAX_OFFSET * smear_scale * release_boost;
-        let echo = if self.release_streak || speed > VISUAL_SMEAR_MAX_SPEED * 0.55 {
-            direction * 10.0 * smear_scale
+        let release_boost = if self.release_streak {
+            VISUAL_RELEASE_SMEAR_BOOST
         } else {
-            Vec2::ZERO
+            1.0
         };
+        let smear = -direction * VISUAL_SMEAR_MAX_OFFSET * smear_scale * release_boost;
+        let echo =
+            if self.release_streak || speed > VISUAL_SMEAR_MAX_SPEED * VISUAL_ECHO_SPEED_RATIO {
+                direction * VISUAL_ECHO_OFFSET_PX * smear_scale
+            } else {
+                Vec2::ZERO
+            };
         let mouth_viseme = (self.speech_remaining > 0.0).then_some(self.viseme.min(4));
 
         AnimationSample {

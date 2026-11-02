@@ -1,7 +1,15 @@
 use glam::Vec2;
 
 use crate::core::config::{
-    SHOCKWAVE_DECAY_PER_SEC, SHOCKWAVE_EXPANSION_PX_PER_SEC, SPARK_GRAVITY_PX_PER_SEC2,
+    DAZED_STAR_PHASE_RATE_RAD_PER_SEC, SHOCKWAVE_DECAY_PER_SEC, SHOCKWAVE_EXPANSION_PX_PER_SEC,
+    SPARK_GRAVITY_PX_PER_SEC2, VFX_CRACK_JITTER_PX, VFX_CRACK_LENGTH_BASE_PX,
+    VFX_CRACK_LENGTH_RANGE_PX, VFX_CRACK_LIFE_BASE_SECS, VFX_CRACK_LIFE_RANGE_SECS,
+    VFX_CRACK_MIN_HARDNESS, VFX_CRACK_RAY_BASE, VFX_CRACK_RAY_RANGE, VFX_CRACK_SEGMENTS,
+    VFX_DIZZY_LIFE_SECS, VFX_SHOCKWAVE_MIN_INTENSITY, VFX_SHOCKWAVE_MIN_RADIUS_PX,
+    VFX_SHOCKWAVE_RADIUS_RANGE_PX, VFX_SHOCKWAVE_START_RADIUS_PX, VFX_SPARK_ANGLE_STEP_RAD,
+    VFX_SPARK_DOWNWARD_BIAS, VFX_SPARK_LIFE_BASE_SECS, VFX_SPARK_LIFE_STEP_SECS,
+    VFX_SPARK_MAX_LIFE_SECS, VFX_SPARK_SPEED_BASE_PX_SEC, VFX_SPARK_SPEED_VARIATION,
+    VFX_SPARK_VERTICAL_JITTER,
 };
 
 #[derive(Debug, Clone)]
@@ -34,9 +42,9 @@ impl Shockwave {
     pub fn new(center: Vec2, hard: f32) -> Self {
         Self {
             center,
-            radius: 8.0,
-            max_radius: 30.0 + hard * 70.0,
-            intensity: hard.clamp(0.2, 1.0),
+            radius: VFX_SHOCKWAVE_START_RADIUS_PX,
+            max_radius: VFX_SHOCKWAVE_MIN_RADIUS_PX + hard * VFX_SHOCKWAVE_RADIUS_RANGE_PX,
+            intensity: hard.clamp(VFX_SHOCKWAVE_MIN_INTENSITY, 1.0),
         }
     }
 
@@ -81,49 +89,50 @@ impl VfxSystem {
 
     pub fn emit_sparks(&mut self, pos: Vec2, count: usize, base_dir: Vec2) {
         for i in 0..count {
-            let angle_offset = ((i as f32) - (count as f32) / 2.0) * 0.25;
-            let speed = 200.0 + ((i * 37) % 300) as f32;
+            let angle_offset = ((i as f32) - (count as f32) / 2.0) * VFX_SPARK_ANGLE_STEP_RAD;
+            let speed = VFX_SPARK_SPEED_BASE_PX_SEC
+                + ((i * 37) % VFX_SPARK_SPEED_VARIATION as usize) as f32;
             let dir = Vec2::new(
                 base_dir.x + angle_offset,
-                base_dir.y - 0.5 - ((i % 3) as f32) * 0.3,
+                base_dir.y - VFX_SPARK_DOWNWARD_BIAS - ((i % 3) as f32) * VFX_SPARK_VERTICAL_JITTER,
             )
             .normalize();
 
             self.sparks.push(Spark {
                 pos,
                 vel: dir * speed,
-                life: 0.35 + ((i % 4) as f32) * 0.1,
-                max_life: 0.5,
+                life: VFX_SPARK_LIFE_BASE_SECS + ((i % 4) as f32) * VFX_SPARK_LIFE_STEP_SECS,
+                max_life: VFX_SPARK_MAX_LIFE_SECS,
                 color_rgb: [1.0, 0.75, 0.2],
             });
         }
     }
 
     pub fn emit_cracks(&mut self, center: Vec2, normal: Vec2, hard: f32) {
-        if hard < 0.25 {
+        if hard < VFX_CRACK_MIN_HARDNESS {
             return;
         }
 
-        let rays = (3.0 + hard * 5.0) as usize;
-        let length = 40.0 + hard * 110.0;
+        let rays = (VFX_CRACK_RAY_BASE + hard * VFX_CRACK_RAY_RANGE) as usize;
+        let length = VFX_CRACK_LENGTH_BASE_PX + hard * VFX_CRACK_LENGTH_RANGE_PX;
 
         for r in 0..rays {
             let angle = (r as f32) * (std::f32::consts::PI * 2.0 / (rays as f32)) + normal.y * 0.5;
             let dir = Vec2::new(angle.cos(), angle.sin());
 
             let mut current = center;
-            for seg in 0..3 {
-                let seg_len = length / 3.0;
+            for seg in 0..VFX_CRACK_SEGMENTS {
+                let seg_len = length / VFX_CRACK_SEGMENTS as f32;
                 let jitter = Vec2::new(
-                    ((seg * 17) % 11) as f32 - 5.0,
-                    ((seg * 23) % 11) as f32 - 5.0,
+                    ((seg * 17) % 11) as f32 - VFX_CRACK_JITTER_PX,
+                    ((seg * 23) % 11) as f32 - VFX_CRACK_JITTER_PX,
                 );
                 let next = current + dir * seg_len + jitter;
 
                 self.cracks.push(CrackSegment {
                     start: current,
                     end: next,
-                    life: 2.0 + hard * 2.0,
+                    life: VFX_CRACK_LIFE_BASE_SECS + hard * VFX_CRACK_LIFE_RANGE_SECS,
                 });
                 current = next;
             }
@@ -140,7 +149,7 @@ impl VfxSystem {
         self.dizzy = Some(DizzyStars {
             center,
             phase: 0.0,
-            life: 2.4,
+            life: VFX_DIZZY_LIFE_SECS,
         });
     }
 
@@ -153,7 +162,7 @@ impl VfxSystem {
             c.life > 0.0
         });
         if let Some(stars) = &mut self.dizzy {
-            stars.phase += 4.5 * dt;
+            stars.phase += DAZED_STAR_PHASE_RATE_RAD_PER_SEC * dt;
             stars.life -= dt;
             if stars.life <= 0.0 {
                 self.dizzy = None;

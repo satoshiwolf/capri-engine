@@ -125,6 +125,51 @@ pub const IMPACT_GLITCH_DURATION_SECS: f32 = 0.32;
 pub const VISUAL_SMEAR_MIN_SPEED: f32 = 80.0;
 pub const VISUAL_SMEAR_MAX_SPEED: f32 = 2400.0;
 pub const VISUAL_SMEAR_MAX_OFFSET: f32 = 34.0;
+pub const VISUAL_RELEASE_SMEAR_BOOST: f32 = 1.35;
+pub const VISUAL_ECHO_OFFSET_PX: f32 = 10.0;
+pub const VISUAL_ECHO_SPEED_RATIO: f32 = 0.55;
+
+/// Impact response tuning for animation flashes, glitches, and particle counts.
+pub const IMPACT_HARDNESS_NORMALIZER_PX_SEC: f32 = 2000.0;
+pub const VISUAL_GRAB_FLASH_SECS: f32 = 0.18;
+pub const VISUAL_GRAB_GLITCH_SECS: f32 = 0.16;
+pub const VISUAL_THROW_FLASH_BASE_SECS: f32 = 0.12;
+pub const VISUAL_THROW_FLASH_SPEED_SECS: f32 = 0.22;
+pub const VISUAL_THROW_GLITCH_BASE_SECS: f32 = 0.20;
+pub const VISUAL_THROW_GLITCH_SPEED_SECS: f32 = 0.30;
+pub const VISUAL_IMPACT_HARDNESS_NORMALIZER_PX_SEC: f32 = 2400.0;
+pub const VISUAL_IMPACT_DURATION_BIAS: f32 = 0.45;
+pub const VISUAL_SKID_LANDING_FLASH_SECS: f32 = 0.12;
+pub const VISUAL_HARD_LANDING_FLASH_SECS: f32 = 0.20;
+pub const VISUAL_FELL_GLITCH_SECS: f32 = 0.22;
+pub const IMPACT_SPARK_COUNT: usize = 12;
+pub const SKID_LANDING_SPARK_COUNT: usize = 8;
+pub const DIZZY_VFX_OFFSET_Y_PX: f32 = -72.0;
+pub const MOUTH_GLITCH_SCALE: f32 = 0.35;
+
+/// Particle and shockwave geometry.
+pub const VFX_SHOCKWAVE_START_RADIUS_PX: f32 = 8.0;
+pub const VFX_SHOCKWAVE_MIN_RADIUS_PX: f32 = 30.0;
+pub const VFX_SHOCKWAVE_RADIUS_RANGE_PX: f32 = 70.0;
+pub const VFX_SHOCKWAVE_MIN_INTENSITY: f32 = 0.2;
+pub const VFX_SPARK_ANGLE_STEP_RAD: f32 = 0.25;
+pub const VFX_SPARK_SPEED_BASE_PX_SEC: f32 = 200.0;
+pub const VFX_SPARK_SPEED_VARIATION: f32 = 300.0;
+pub const VFX_SPARK_DOWNWARD_BIAS: f32 = 0.5;
+pub const VFX_SPARK_VERTICAL_JITTER: f32 = 0.3;
+pub const VFX_SPARK_LIFE_BASE_SECS: f32 = 0.35;
+pub const VFX_SPARK_LIFE_STEP_SECS: f32 = 0.1;
+pub const VFX_SPARK_MAX_LIFE_SECS: f32 = 0.5;
+pub const VFX_CRACK_MIN_HARDNESS: f32 = 0.25;
+pub const VFX_CRACK_RAY_BASE: f32 = 3.0;
+pub const VFX_CRACK_RAY_RANGE: f32 = 5.0;
+pub const VFX_CRACK_LENGTH_BASE_PX: f32 = 40.0;
+pub const VFX_CRACK_LENGTH_RANGE_PX: f32 = 110.0;
+pub const VFX_CRACK_SEGMENTS: usize = 3;
+pub const VFX_CRACK_JITTER_PX: f32 = 5.0;
+pub const VFX_CRACK_LIFE_BASE_SECS: f32 = 2.0;
+pub const VFX_CRACK_LIFE_RANGE_SECS: f32 = 2.0;
+pub const VFX_DIZZY_LIFE_SECS: f32 = 2.4;
 
 /// Default voice-driven mouth cadence.
 pub const MOUTH_FPS: f32 = 12.0;
