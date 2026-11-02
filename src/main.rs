@@ -21,8 +21,8 @@ use capri_engine::desktop::ledges::{Ledge, scan_ledges};
 use capri_engine::desktop::monitors::{MonitorInfo, enumerate_monitors, virtual_desktop_bounds};
 use capri_engine::gateway::WsGatewayServer;
 use capri_engine::gateway::protocol::{IncomingCommand, OutgoingEvent};
-use capri_engine::physics::PhysicsEngine;
 use capri_engine::physics::collision::LedgeSurface;
+use capri_engine::physics::{PhysicsSnapshot, PhysicsWorker};
 use capri_engine::render::animation::{
     AnimationAction, AnimationController, AnimationInput, AnimationSample, ClipCatalog, ClipId,
 };
@@ -110,7 +110,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.28 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.29 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -140,6 +140,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let (vx, vy, vr, vb) = virtual_desktop_bounds();
     let initial_pos = Vec2::new((vx + (vr - vx) / 2) as f32, (vb - 400) as f32);
+    let target_fps = std::env::var("CAPRI_TARGET_FPS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|fps| *fps == 60 || *fps == 120)
+        .unwrap_or(DEFAULT_RENDER_HZ);
 
     let mut overlay = CompositionOverlay::create().map_err(std::io::Error::other)?;
     let hwnd = overlay.hwnd();
@@ -151,7 +156,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .map_err(std::io::Error::other)?;
 
-    let mut physics = PhysicsEngine::new(initial_pos);
+    let physics_worker = PhysicsWorker::spawn(
+        initial_pos,
+        (vx as f32, vy as f32, vr as f32, vb as f32),
+        target_fps,
+    );
+    let mut physics = PhysicsSnapshot::initial(initial_pos);
     let mut animation = AnimationController::new();
     animation.play_action(AnimationAction::Arrive);
     let mut vfx = VfxSystem::new();
@@ -162,11 +172,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cached_ledges = Vec::new();
     let mut current_monitor_idx = 0;
-    let target_fps = std::env::var("CAPRI_TARGET_FPS")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|fps| *fps == 60 || *fps == 120)
-        .unwrap_or(DEFAULT_RENDER_HZ);
     let target_frame_duration = Duration::from_secs_f32(1.0 / target_fps as f32);
     let start_time = Instant::now();
     let mut last_frame = Instant::now();
@@ -200,6 +205,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cached_ledges = ledges;
         }
         let surfaces = ledge_surfaces(&cached_ledges);
+        if !physics_worker.set_surfaces(surfaces.clone()) {
+            eprintln!("[PHYSICS] No se pudieron actualizar las superficies");
+        }
 
         let (cursor_x, cursor_y) = overlay.poll_cursor().map_err(std::io::Error::other)?;
         let cursor_screen = Vec2::new(cursor_x as f32, cursor_y as f32);
@@ -242,29 +250,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(std::io::Error::other)?;
 
         if mouse_down && !was_mouse_down && is_over_capri {
-            let event = physics.pick_up(cursor_screen);
-            animation.on_engine_event(&event);
-            let _ = event_tx.send(OutgoingEvent::AvatarGrabbed {
-                x: cursor_screen.x,
-                y: cursor_screen.y,
-            });
-        } else if mouse_down && was_mouse_down && physics.stance() == Stance::Held {
-            physics.update_held(cursor_screen, timestamp, dt);
-        } else if !mouse_down && was_mouse_down && physics.stance() == Stance::Held {
-            let event = physics.release();
-            animation.on_engine_event(&event);
-            if let EngineEvent::Thrown { velocity, speed } = event {
-                let _ = event_tx.send(OutgoingEvent::AvatarThrown {
-                    speed,
-                    vx: velocity.x,
-                    vy: velocity.y,
-                });
+            if !physics_worker.pick_up(cursor_screen) {
+                eprintln!("[PHYSICS] No se pudo iniciar el arrastre");
             }
+        } else if mouse_down && was_mouse_down && physics.stance() == Stance::Held {
+            let _ = physics_worker.update_held(cursor_screen, timestamp, dt);
+        } else if !mouse_down && was_mouse_down && physics.stance() == Stance::Held {
+            let _ = physics_worker.release();
         }
         was_mouse_down = mouse_down;
 
         if physics.stance() == Stance::Ride {
-            physics.update_ride(cursor_screen, cursor_motion, dt);
+            let _ = physics_worker.update_ride(cursor_screen, cursor_motion, dt);
         }
 
         while let Ok(command) = cmd_rx.try_recv() {
@@ -278,28 +275,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "perch_on_window" => {
                             if let Some(surface) =
                                 find_target_surface(target.as_deref(), &surfaces).cloned()
-                                && !physics.perch_on(surface)
+                                && !physics_worker.perch_on(surface)
                             {
                                 eprintln!("[GATEWAY COMMAND] Target ledge is too narrow");
                             }
                         }
                         "hang_on_ceiling" => {
-                            physics.hang_on_ceiling(vy as f32);
+                            let _ = physics_worker.hang_on_ceiling(vy as f32);
                         }
                         "hang_on_cursor" => {
-                            physics.ride_cursor();
+                            let _ = physics_worker.ride_cursor();
                         }
                         "sleep" => {
-                            physics.sleep(vx as f32, vr as f32, vb as f32);
+                            let _ = physics_worker.sleep();
                         }
                         "wake" => {
-                            physics.wake();
+                            let _ = physics_worker.wake();
                             animation.play_action(AnimationAction::Wake);
                         }
                         "arrive" => animation.play_action(AnimationAction::Arrive),
                         "leave" => animation.play_action(AnimationAction::Leave),
                         "reset_stand" => {
-                            physics.reset_stand();
+                            let _ = physics_worker.reset_stand();
                         }
                         _ => {}
                     }
@@ -324,38 +321,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         screen, x, y
                     );
                     let target = resolve_point_at(screen, x, y, &monitors);
-                    physics.face_toward(target.x);
+                    let _ = physics_worker.face_toward(target.x);
                 }
             }
         }
 
-        let physics_events =
-            physics.step_with_surfaces(dt, vx as f32, vy as f32, vr as f32, vb as f32, &surfaces);
-        for event in physics_events {
-            animation.on_engine_event(&event);
-            send_physics_telemetry(&event_tx, &event, physics.center_pos().x);
-            if let EngineEvent::Impact {
-                normal,
-                speed,
-                point,
-                ..
-            } = &event
-            {
-                let hard = (*speed / IMPACT_HARDNESS_NORMALIZER_PX_SEC).clamp(0.0, 1.0);
-                vfx.emit_sparks(*point, IMPACT_SPARK_COUNT, *normal);
-                vfx.emit_cracks(*point, *normal, hard);
-                vfx.emit_shockwave(*point, hard);
-            }
-            if let EngineEvent::Landed {
-                surface_y, skid, ..
-            } = &event
-                && *skid
-            {
-                vfx.emit_sparks(
-                    Vec2::new(physics.center_pos().x, *surface_y),
-                    SKID_LANDING_SPARK_COUNT,
-                    Vec2::new(-1.0, 0.0),
-                );
+        while let Ok(output) = physics_worker.try_recv() {
+            physics = output.snapshot;
+            for event in output.events {
+                animation.on_engine_event(&event);
+                send_physics_telemetry(&event_tx, &event, physics.center_pos().x);
+                match &event {
+                    EngineEvent::Grabbed { screen_pos, .. } => {
+                        let _ = event_tx.send(OutgoingEvent::AvatarGrabbed {
+                            x: screen_pos.x,
+                            y: screen_pos.y,
+                        });
+                    }
+                    EngineEvent::Thrown { velocity, speed } => {
+                        let _ = event_tx.send(OutgoingEvent::AvatarThrown {
+                            speed: *speed,
+                            vx: velocity.x,
+                            vy: velocity.y,
+                        });
+                    }
+                    _ => {}
+                }
+                if let EngineEvent::Impact {
+                    normal,
+                    speed,
+                    point,
+                    ..
+                } = &event
+                {
+                    let hard = (*speed / IMPACT_HARDNESS_NORMALIZER_PX_SEC).clamp(0.0, 1.0);
+                    vfx.emit_sparks(*point, IMPACT_SPARK_COUNT, *normal);
+                    vfx.emit_cracks(*point, *normal, hard);
+                    vfx.emit_shockwave(*point, hard);
+                }
+                if let EngineEvent::Landed {
+                    surface_y, skid, ..
+                } = &event
+                    && *skid
+                {
+                    vfx.emit_sparks(
+                        Vec2::new(physics.center_pos().x, *surface_y),
+                        SKID_LANDING_SPARK_COUNT,
+                        Vec2::new(-1.0, 0.0),
+                    );
+                }
             }
         }
 
@@ -547,7 +561,7 @@ fn select_body(
     )
 }
 
-fn prewarm_animation(manager: &mut SpriteManager, physics: &PhysicsEngine) {
+fn prewarm_animation(manager: &mut SpriteManager, physics: &PhysicsSnapshot) {
     let flipped = physics.facing() == Facing::Left;
     let next = match physics.stance() {
         Stance::Skid if physics.has_landing_surface() => Some(ClipId::Perch),
@@ -561,7 +575,7 @@ fn prewarm_animation(manager: &mut SpriteManager, physics: &PhysicsEngine) {
     }
 }
 
-fn render_transform(physics: &PhysicsEngine, actual_flipped_asset: bool) -> VisualTransform {
+fn render_transform(physics: &PhysicsSnapshot, actual_flipped_asset: bool) -> VisualTransform {
     let mut transform = physics.visual_transform();
     if actual_flipped_asset {
         transform.facing = Facing::Right;
@@ -575,7 +589,7 @@ fn render_transform(physics: &PhysicsEngine, actual_flipped_asset: bool) -> Visu
     transform
 }
 
-fn current_motion(physics: &PhysicsEngine, cursor_motion: Vec2) -> Vec2 {
+fn current_motion(physics: &PhysicsSnapshot, cursor_motion: Vec2) -> Vec2 {
     match physics.stance() {
         Stance::Held | Stance::Ride => cursor_motion,
         Stance::Fly => physics
