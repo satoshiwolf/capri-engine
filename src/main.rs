@@ -107,7 +107,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.9 - Cyberpunk Physics Host   ");
+    println!("          CAPRI ENGINE v0.3.10 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -171,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut was_mouse_down = false;
     let mut was_dazed = false;
     let mut last_skid_spark = Instant::now() - Duration::from_secs(1);
-    let mut reported_stance = physics.stance;
+    let mut reported_stance = physics.stance();
     let mut last_body = RenderedBody {
         clip: ClipId::Idle,
         flipped: false,
@@ -226,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 input_pivot,
             );
-        let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance);
+        let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance());
         overlay.input().set_capture_input(capture_input);
         overlay
             .sync_input_capture(capture_input)
@@ -239,9 +239,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 x: cursor_screen.x,
                 y: cursor_screen.y,
             });
-        } else if mouse_down && was_mouse_down && physics.stance == Stance::Held {
+        } else if mouse_down && was_mouse_down && physics.stance() == Stance::Held {
             physics.update_held(cursor_screen, timestamp, dt);
-        } else if !mouse_down && was_mouse_down && physics.stance == Stance::Held {
+        } else if !mouse_down && was_mouse_down && physics.stance() == Stance::Held {
             let event = physics.release();
             animation.on_engine_event(&event);
             if let EngineEvent::Thrown { velocity, speed } = event {
@@ -254,7 +254,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         was_mouse_down = mouse_down;
 
-        if physics.stance == Stance::Ride {
+        if physics.stance() == Stance::Ride {
             physics.update_ride(cursor_screen, cursor_motion, dt);
         }
 
@@ -315,7 +315,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             physics.step_with_surfaces(dt, vx as f32, vy as f32, vr as f32, vb as f32, &surfaces);
         for event in physics_events {
             animation.on_engine_event(&event);
-            send_physics_telemetry(&event_tx, &event, physics.center_pos.x);
+            send_physics_telemetry(&event_tx, &event, physics.center_pos().x);
             if let EngineEvent::Impact {
                 normal,
                 speed,
@@ -334,27 +334,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 && *skid
             {
                 vfx.emit_sparks(
-                    Vec2::new(physics.center_pos.x, *surface_y),
+                    Vec2::new(physics.center_pos().x, *surface_y),
                     8,
                     Vec2::new(-1.0, 0.0),
                 );
             }
         }
 
-        if physics.stance == Stance::Dazed && !was_dazed {
-            vfx.emit_dizzy(physics.center_pos + Vec2::new(0.0, -72.0));
+        if physics.stance() == Stance::Dazed && !was_dazed {
+            vfx.emit_dizzy(physics.center_pos() + Vec2::new(0.0, -72.0));
         }
-        was_dazed = physics.stance == Stance::Dazed;
-        if physics.stance == Stance::Skid
+        was_dazed = physics.stance() == Stance::Dazed;
+        if physics.stance() == Stance::Skid
             && last_skid_spark.elapsed() >= Duration::from_secs_f32(SKID_SPARK_INTERVAL_SECS)
-            && let Some(skid) = &physics.skid
+            && let Some(skid) = physics.skid()
         {
             vfx.emit_sparks(skid.feet_pos, 2, Vec2::new(-skid.velocity_x.signum(), 0.0));
             last_skid_spark = Instant::now();
         }
 
         for (index, monitor) in monitors.iter().enumerate() {
-            if monitor.contains_point(physics.center_pos) && index != current_monitor_idx {
+            if monitor.contains_point(physics.center_pos()) && index != current_monitor_idx {
                 current_monitor_idx = index;
                 let _ = event_tx.send(OutgoingEvent::MonitorChanged {
                     screen_index: index,
@@ -364,10 +364,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if physics.stance != reported_stance {
-            reported_stance = physics.stance;
+        if physics.stance() != reported_stance {
+            reported_stance = physics.stance();
             let _ = event_tx.send(OutgoingEvent::StateChanged {
-                stance: format!("{:?}", physics.stance).to_lowercase(),
+                stance: format!("{:?}", physics.stance()).to_lowercase(),
             });
         }
 
@@ -375,12 +375,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         animation.update(
             dt,
             AnimationInput {
-                stance: physics.stance,
-                facing: physics.facing,
+                stance: physics.stance(),
+                facing: physics.facing(),
                 motion: current_motion(&physics, cursor_motion),
                 release_streak: physics
-                    .flight
-                    .as_ref()
+                    .flight()
                     .is_some_and(|flight| flight.release_streak > 0),
             },
         );
@@ -416,7 +415,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mouth_strip = mouth_key.and_then(|key| sprite_manager.get_strip(key.name()));
         if let Some(strip) = body_strip {
             let mut body = SpriteInstance::new(strip, body_frame, transform, pivot);
-            body.mirror_uv = physics.facing == Facing::Left && !body_flipped;
+            body.mirror_uv = physics.facing() == Facing::Left && !body_flipped;
             body.flash = sample.flash;
             body.glitch = sample.glitch;
             body.smear = sample.smear;
@@ -435,7 +434,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         spec.pivot,
                     );
                     mouth.glitch = sample.glitch * 0.35;
-                    mouth.mirror_uv = physics.facing == Facing::Left && !body_flipped;
+                    mouth.mirror_uv = physics.facing() == Facing::Left && !body_flipped;
                     mouth
                 })
             });
@@ -531,8 +530,8 @@ fn select_body(
 }
 
 fn prewarm_animation(manager: &mut SpriteManager, physics: &PhysicsEngine) {
-    let flipped = physics.facing == Facing::Left;
-    let next = match physics.stance {
+    let flipped = physics.facing() == Facing::Left;
+    let next = match physics.stance() {
         Stance::Skid if physics.has_landing_surface() => Some(ClipId::Perch),
         Stance::Dazed => Some(ClipId::Laydown),
         Stance::Sit | Stance::Corner => Some(ClipId::Laydown),
@@ -549,8 +548,8 @@ fn render_transform(physics: &PhysicsEngine, actual_flipped_asset: bool) -> Visu
     if actual_flipped_asset {
         transform.facing = Facing::Right;
     }
-    if physics.stance == Stance::Skid
-        && let Some(skid) = &physics.skid
+    if physics.stance() == Stance::Skid
+        && let Some(skid) = physics.skid()
     {
         transform.rotation_degrees = (-skid.velocity_x * SKID_LEAN_PER_PX_SEC)
             .clamp(-SKID_MAX_LEAN_DEGREES, SKID_MAX_LEAN_DEGREES);
@@ -559,11 +558,10 @@ fn render_transform(physics: &PhysicsEngine, actual_flipped_asset: bool) -> Visu
 }
 
 fn current_motion(physics: &PhysicsEngine, cursor_motion: Vec2) -> Vec2 {
-    match physics.stance {
+    match physics.stance() {
         Stance::Held | Stance::Ride => cursor_motion,
         Stance::Fly => physics
-            .flight
-            .as_ref()
+            .flight()
             .map_or(Vec2::ZERO, |flight| flight.velocity),
         _ => Vec2::ZERO,
     }

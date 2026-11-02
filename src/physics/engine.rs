@@ -25,18 +25,66 @@ struct PointerSample {
 }
 
 pub struct PhysicsEngine {
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `stance()`. Direct mutation bypasses FSM invariants and will be removed in 0.4.0."
+    )]
     pub stance: Stance,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `center_pos()`. This field will be removed in 0.4.0."
+    )]
     pub center_pos: Vec2,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `rotation()`. This field will be removed in 0.4.0."
+    )]
     pub rotation: f32,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `scale()`. This field will be removed in 0.4.0."
+    )]
     pub scale: f32,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `squash_scale()`. This field will be removed in 0.4.0."
+    )]
     pub squash_scale: Vec2,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `facing()`. This field will be removed in 0.4.0."
+    )]
     pub facing: Facing,
 
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `pendulum()`. This field will be removed in 0.4.0."
+    )]
     pub pendulum: Option<PendulumState>,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `flight()`. This field will be removed in 0.4.0."
+    )]
     pub flight: Option<FlightState>,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `squash()`. This field will be removed in 0.4.0."
+    )]
     pub squash: Option<SquashState>,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `skid()`. This field will be removed in 0.4.0."
+    )]
     pub skid: Option<SkidState>,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `dazed()`. This field will be removed in 0.4.0."
+    )]
     pub dazed: Option<DazedState>,
+    #[deprecated(
+        since = "0.3.1",
+        note = "Use `seated_surface()`. This field will be removed in 0.4.0."
+    )]
     pub seated_surface: Option<LedgeSurface>,
 
     pointer_samples: VecDeque<PointerSample>,
@@ -45,6 +93,7 @@ pub struct PhysicsEngine {
     sit_elapsed: f32,
 }
 
+#[allow(deprecated)]
 impl PhysicsEngine {
     pub fn new(initial_pos: Vec2) -> Self {
         Self {
@@ -65,6 +114,54 @@ impl PhysicsEngine {
             landing_surface: None,
             sit_elapsed: 0.0,
         }
+    }
+
+    pub fn stance(&self) -> Stance {
+        self.stance
+    }
+
+    pub fn center_pos(&self) -> Vec2 {
+        self.center_pos
+    }
+
+    pub fn rotation(&self) -> f32 {
+        self.rotation
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    pub fn squash_scale(&self) -> Vec2 {
+        self.squash_scale
+    }
+
+    pub fn facing(&self) -> Facing {
+        self.facing
+    }
+
+    pub fn pendulum(&self) -> Option<&PendulumState> {
+        self.pendulum.as_ref()
+    }
+
+    pub fn flight(&self) -> Option<&FlightState> {
+        self.flight.as_ref()
+    }
+
+    pub fn squash(&self) -> Option<&SquashState> {
+        self.squash.as_ref()
+    }
+
+    pub fn skid(&self) -> Option<&SkidState> {
+        self.skid.as_ref()
+    }
+
+    pub fn dazed(&self) -> Option<&DazedState> {
+        self.dazed.as_ref()
+    }
+
+    pub fn seated_surface(&self) -> Option<&LedgeSurface> {
+        self.seated_surface.as_ref()
     }
 
     pub fn pick_up(&mut self, cursor_pos: Vec2) -> EngineEvent {
@@ -611,6 +708,7 @@ impl PhysicsEngine {
     }
 }
 
+#[allow(deprecated)]
 #[cfg(test)]
 mod tests {
     use super::*;
