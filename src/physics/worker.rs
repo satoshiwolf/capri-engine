@@ -14,6 +14,7 @@ use crate::physics::reactions::SkidState;
 
 const COMMAND_CAPACITY: usize = 64;
 const OUTPUT_CAPACITY: usize = 8;
+const MAX_CATCH_UP_STEPS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct FlightSnapshot {
@@ -275,10 +276,11 @@ impl FixedStepClock {
             return 0;
         }
         let elapsed = now - self.next_tick;
-        let steps =
+        let due =
             (elapsed.as_nanos() / self.tick_duration.as_nanos() + 1).min(u32::MAX as u128) as u32;
+        let steps = due.min(MAX_CATCH_UP_STEPS as u32);
         self.next_tick += self.tick_duration * steps;
-        (steps as usize).min(8)
+        steps as usize
     }
 
     fn time_until_next(&self, now: Instant) -> Duration {
@@ -405,6 +407,17 @@ mod tests {
 
         assert_eq!(steps_60, 60);
         assert_eq!(steps_120, 120);
+    }
+
+    #[test]
+    fn fixed_clock_carries_steps_after_a_stall() {
+        let start = Instant::now();
+        let mut clock = FixedStepClock::new(60, start);
+        let stall_end = start + Duration::from_millis(250);
+
+        assert_eq!(clock.steps_due(stall_end), MAX_CATCH_UP_STEPS);
+        assert_eq!(clock.steps_due(stall_end), 7);
+        assert_eq!(clock.steps_due(stall_end), 0);
     }
 
     #[test]
