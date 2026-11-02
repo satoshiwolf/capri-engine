@@ -5,8 +5,8 @@
 | Campo | Valor |
 | :--- | :--- |
 | Fecha | 2026-11-02 |
-| Commit final | `9122445073b3651474399f61baf8d99ef957e1b0` |
-| Version | `0.3.52` |
+| Commit de codigo final | `bd6f8a1` |
+| Version | `0.3.53` |
 | Auditoria base | `reports/auditoria-exhaustiva-2026-11-01.md` |
 | Modalidad | Reauditoria independiente de arquitectura, seguridad/concurrencia y contratos/calidad |
 | Codigo fuente auditado | 43 archivos Rust, 8,416 lineas |
@@ -19,10 +19,16 @@ correccion verificable. Los riesgos criticos de starvation del gateway,
 incoherencia del hit-testing, fugas de handles Win32, panics por repisas
 estrechas y perdida de estados de puntero fueron eliminados.
 
-La unica cobertura no ejecutada en este entorno es la validacion interactiva de
-FPS, latencia completa del despacho Win32 y memoria del driver GPU. El codigo
-necesario para observar frame time, p95, maximo, jitter, working set del proceso
-y residencia de mascaras ya esta integrado.
+La prueba de humo Win32 si se ejecuto. Arrancaron el gateway, los assets, la
+ventana DirectComposition y DX12. El proceso se mantuvo estable durante la
+ventana de observacion, pero el working set medido fue 152.00 MiB y la memoria
+privada 321.44 MiB en una GPU NVIDIA RTX 3060.
+
+Ese resultado excede el objetivo de 25 MB para memoria total. Reducir features
+de wgpu/Tokio y aplicar LTO no cambio materialmente el consumo, lo que confirma
+que el costo dominante es la pila del driver DX12/GPU. Cumplir 25 MB de proceso
+total requiere reemplazar el renderer GPU o revisar explicitamente el objetivo
+de rendimiento; no se puede resolver como una optimizacion local.
 
 ## Matriz final
 
@@ -36,7 +42,7 @@ y residencia de mascaras ya esta integrado.
 | P1-04 | SOLUCIONADO | Worker dedicado 60/120 Hz, backlog sin perdida y puntero procesado dentro del tick. |
 | P1-05 | SOLUCIONADO | `unsafe` limitado a `render/window.rs` y `desktop/hooks.rs`. |
 | P1-06 | SOLUCIONADO | Sin supresiones globales; clippy estricto pasa. |
-| P1-07 | CODIGO SOLUCIONADO | Benchmark, frame metrics, jitter, RSS y mascaras; falta validacion interactiva Win32/GPU. |
+| P1-07 | CODIGO SOLUCIONADO; TARGET DE MEMORIA NO CUMPLE | Benchmark, frame metrics, jitter, RSS y mascaras medidos; working set real de 152.00 MiB frente a 25 MB objetivo. |
 | P2-01 | SOLUCIONADO | `Lagged` y `Closed` manejados explicitamente. |
 | P2-02 | SOLUCIONADO | Errores de `accept` registrados y reintentados. |
 | P2-03 | SOLUCIONADO | Canales acotados, limites, timeout de handshake, `Origin`, token y API unbounded deprecada. |
@@ -111,17 +117,17 @@ debajo del limite.
 | `cargo clippy -- -D warnings` | Correcto |
 | `cargo build` | Correcto |
 | `cargo build --release` | Correcto |
-| `cargo bench --bench hittest` | Aproximadamente 21.5 ns por consulta |
+| `cargo bench --bench hittest` | 20.2 ns por consulta |
 
 El benchmark queda muy por debajo del objetivo de 10,000 ns (`0.01 ms`) por
 consulta de hit-testing de CPU.
 
 ## Riesgos residuales
 
-1. No se ejecuto una sesion Win32 interactiva durante la auditoria. La
-   instrumentacion reporta frame time, p95, maximo, jitter, RSS y memoria de
-   mascaras, pero FPS real, memoria del driver GPU y latencia end-to-end deben
-   medirse en una estacion de escritorio.
+1. La prueba Win32 arranco correctamente, pero el working set real fue 152.00
+   MiB y la memoria privada 321.44 MiB. El objetivo de 25 MB de proceso total
+   no se cumple con wgpu/DX12 y el driver NVIDIA. La optimizacion de features y
+   release no fue suficiente; se requiere una decision arquitectonica.
 2. `AGENTS.md` esta actualizado localmente, pero el repositorio lo ignora
    mediante `.gitignore`. Los READMEs versionados documentan la arquitectura.
 3. Los campos publicos antiguos permanecen disponibles durante el ciclo de
@@ -133,7 +139,7 @@ consulta de hit-testing de CPU.
 
 ## Commits de correccion
 
-Los siguientes 54 commits se encuentran entre la auditoria original y el
+Los siguientes 55 commits se encuentran entre la auditoria original y el
 estado final:
 
 | Commit | Correccion |
@@ -192,10 +198,15 @@ estado final:
 | `0e23246` | Reportar working set del proceso |
 | `29b1993` | Documentar fronteras modulares |
 | `9122445` | Evitar truncamiento de coordenadas virtuales |
+| `bd6f8a1` | Recortar features de runtime y perfil release |
 
 ## Conclusion
 
 La auditoria original no deja problemas de codigo pendientes. La arquitectura
 quedo dividida por responsabilidades, ninguna unidad supera 1,000 lineas y las
 verificaciones obligatorias, build release y benchmark pasan. La reauditoria
-post-fix no encontro hallazgos criticos o bloqueantes en el estado final.
+post-fix no encontro hallazgos criticos o bloqueantes de seguridad.
+
+Queda una discrepancia de producto: el objetivo de 25 MB de proceso total no es
+compatible con el stack wgpu/DX12 actual. Preservar la arquitectura GPU exige
+revisar ese objetivo; imponerlo como limite duro exige un rediseno del renderer.
