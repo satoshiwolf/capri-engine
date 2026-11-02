@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::core::error::{EngineError, EngineResult};
 use crate::render::sprites::SpriteStrip;
 
 use super::Renderer;
@@ -12,7 +13,7 @@ pub(super) struct GpuSprite {
 }
 
 impl Renderer {
-    pub fn prepare_strip(&mut self, strip: &SpriteStrip) -> Result<(), String> {
+    pub fn prepare_strip(&mut self, strip: &SpriteStrip) -> EngineResult<()> {
         let _ = self.sprite_bind_group(strip)?;
         Ok(())
     }
@@ -24,7 +25,7 @@ impl Renderer {
     pub(super) fn sprite_bind_group(
         &mut self,
         strip: &SpriteStrip,
-    ) -> Result<wgpu::BindGroup, String> {
+    ) -> EngineResult<wgpu::BindGroup> {
         if !self.sprite_cache.contains_key(&strip.name) {
             let texture = self.create_sprite_texture(strip)?;
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -58,10 +59,15 @@ impl Renderer {
         self.sprite_cache
             .get(&strip.name)
             .map(|sprite| sprite.bind_group.clone())
-            .ok_or_else(|| format!("sprite '{}' was not cached", strip.name))
+            .ok_or_else(|| {
+                EngineError::gpu(
+                    "resolve sprite bind group",
+                    format!("sprite '{}' was not cached", strip.name),
+                )
+            })
     }
 
-    fn create_sprite_texture(&self, strip: &SpriteStrip) -> Result<wgpu::Texture, String> {
+    fn create_sprite_texture(&self, strip: &SpriteStrip) -> EngineResult<wgpu::Texture> {
         let frame_size = strip.frame_width as usize * strip.frame_height as usize * 4;
         if strip.rgba_frames.len() != strip.frame_count
             || strip
@@ -69,9 +75,12 @@ impl Renderer {
                 .iter()
                 .any(|frame| frame.len() != frame_size)
         {
-            return Err(format!(
-                "sprite '{}' has inconsistent RGBA frame dimensions",
-                strip.name
+            return Err(EngineError::asset(
+                "upload sprite",
+                format!(
+                    "sprite '{}' has inconsistent RGBA frame dimensions",
+                    strip.name
+                ),
             ));
         }
 

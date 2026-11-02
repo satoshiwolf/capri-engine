@@ -13,6 +13,7 @@ use crate::core::config::{
     GATEWAY_ACCEPT_RETRY_DELAY_MS, GATEWAY_MAX_CONNECTIONS, GATEWAY_MAX_FRAME_BYTES,
     GATEWAY_MAX_MESSAGE_BYTES, GATEWAY_MAX_WRITE_BUFFER_BYTES,
 };
+use crate::core::error::{EngineError, EngineResult};
 use crate::gateway::protocol::{IncomingCommand, OutgoingEvent};
 
 #[derive(Clone)]
@@ -132,18 +133,25 @@ impl WsGatewayServer {
         }
     }
 
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let addr: SocketAddr = format!("127.0.0.1:{}", self.port).parse()?;
-        let listener = TcpListener::bind(&addr).await?;
-        let local_addr = listener.local_addr()?;
+    pub async fn run(self) -> EngineResult<()> {
+        let addr: SocketAddr = format!("127.0.0.1:{}", self.port)
+            .parse::<SocketAddr>()
+            .map_err(|error| EngineError::gateway("parse gateway address", error.to_string()))?;
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|source| EngineError::Io {
+                operation: "bind gateway",
+                source,
+            })?;
+        let local_addr = listener.local_addr().map_err(|source| EngineError::Io {
+            operation: "read gateway address",
+            source,
+        })?;
         println!("[GATEWAY] Servidor WebSocket activo en ws://{}", local_addr);
         self.serve(listener).await
     }
 
-    async fn serve(
-        self,
-        listener: TcpListener,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn serve(self, listener: TcpListener) -> EngineResult<()> {
         loop {
             let (stream, client_addr) = match listener.accept().await {
                 Ok(connection) => connection,

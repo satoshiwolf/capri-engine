@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use glam::Vec2;
 
 use crate::core::config::MID_POINT;
+use crate::core::error::{EngineError, EngineResult};
 use crate::core::state::{Facing, Stance};
 use crate::core::visual::VisualTransform;
 use crate::render::animation::{ClipCatalog, base_clip_for_stance};
@@ -34,7 +35,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(overlay: &CompositionOverlay) -> Result<Self, String> {
+    pub async fn new(overlay: &CompositionOverlay) -> EngineResult<Self> {
         let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         instance_descriptor.backends = wgpu::Backends::DX12;
         let instance = wgpu::Instance::new(instance_descriptor);
@@ -47,7 +48,7 @@ impl Renderer {
                 apply_limit_buckets: false,
             })
             .await
-            .map_err(|error| format!("request DX12 adapter: {error}"))?;
+            .map_err(|error| EngineError::gpu("request DX12 adapter", error.to_string()))?;
         let adapter_info = adapter.get_info();
         println!(
             "[RENDER] Adaptador DX12: {} ({:?})",
@@ -61,14 +62,17 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .map_err(|error| format!("request DX12 device: {error}"))?;
+            .map_err(|error| EngineError::gpu("request DX12 device", error.to_string()))?;
 
         let capabilities = surface.get_capabilities(&adapter);
         if !capabilities
             .alpha_modes
             .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
         {
-            return Err("DX12 composition does not support premultiplied alpha".to_string());
+            return Err(EngineError::gpu(
+                "configure surface",
+                "DX12 composition does not support premultiplied alpha",
+            ));
         }
         let format = capabilities
             .formats
@@ -76,7 +80,12 @@ impl Renderer {
             .copied()
             .find(wgpu::TextureFormat::is_srgb)
             .or_else(|| capabilities.formats.first().copied())
-            .ok_or_else(|| "DX12 surface exposes no texture formats".to_string())?;
+            .ok_or_else(|| {
+                EngineError::gpu(
+                    "configure surface",
+                    "DX12 surface exposes no texture formats",
+                )
+            })?;
         let (width, height) = overlay.size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -263,7 +272,7 @@ impl Renderer {
         body: SpriteInstance<'_>,
         mouth: Option<SpriteInstance<'_>>,
         vfx: &VfxSystem,
-    ) -> Result<(), String> {
+    ) -> EngineResult<()> {
         let body_bind_group = self.sprite_bind_group(body.strip)?;
         let mouth_bind_group = mouth
             .as_ref()
@@ -305,7 +314,10 @@ impl Renderer {
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Validation => {
-                return Err("DX12 surface validation failed".to_string());
+                return Err(EngineError::gpu(
+                    "acquire surface texture",
+                    "DX12 surface validation failed",
+                ));
             }
         };
         let view = surface_texture
@@ -358,7 +370,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> Result<(), String> {
+    pub fn render(&mut self, sprite: SpriteDraw<'_>, vfx: &VfxSystem) -> EngineResult<()> {
         let facing = if sprite.facing < 0.0 {
             Facing::Left
         } else {
@@ -378,7 +390,7 @@ impl Renderer {
         self.render_animation(instance, None, vfx)
     }
 
-    fn reconfigure(&self) -> Result<(), String> {
+    fn reconfigure(&self) -> EngineResult<()> {
         self.surface.configure(&self.device, &self.config);
         Ok(())
     }

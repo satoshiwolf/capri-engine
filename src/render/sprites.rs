@@ -1,4 +1,5 @@
 use crate::core::config::MAX_SPRITE_RESIDENT_BYTES;
+use crate::core::error::{EngineError, EngineResult};
 use crate::render::animation::{ClipCatalog, ClipId};
 use crate::render::hittest::AlphaBitmask;
 use image::GenericImageView;
@@ -25,17 +26,25 @@ impl SpriteStrip {
         frame_width: u32,
         frame_height: u32,
         fps: f32,
-    ) -> Result<Self, String> {
+    ) -> EngineResult<Self> {
         if frame_width == 0 || frame_height == 0 {
-            return Err(format!("sprite '{name}' has an empty cell size"));
+            return Err(EngineError::asset(
+                "load sprite",
+                format!("sprite '{name}' has an empty cell size"),
+            ));
         }
-        let img =
-            image::open(&path).map_err(|e| format!("Error opening {:?}: {}", path.as_ref(), e))?;
+        let img = image::open(&path).map_err(|source| EngineError::Image {
+            operation: "open sprite",
+            source,
+        })?;
         let (total_w, total_h) = img.dimensions();
         if total_h != frame_height || total_w % frame_width != 0 {
-            return Err(format!(
-                "sprite '{name}' dimensions {}x{} do not match {frame_width}x{frame_height} cells",
-                total_w, total_h
+            return Err(EngineError::asset(
+                "validate sprite",
+                format!(
+                    "sprite '{name}' dimensions {}x{} do not match {frame_width}x{frame_height} cells",
+                    total_w, total_h
+                ),
             ));
         }
 
@@ -72,14 +81,16 @@ impl SpriteStrip {
         })
     }
 
-    pub fn from_spec(
-        path: &Path,
-        spec: &crate::render::animation::ClipSpec,
-    ) -> Result<Self, String> {
+    pub fn from_spec(path: &Path, spec: &crate::render::animation::ClipSpec) -> EngineResult<Self> {
         let asset_name = path
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("sprite path {:?} has no UTF-8 filename", path))?;
+            .ok_or_else(|| {
+                EngineError::asset(
+                    "resolve sprite path",
+                    format!("sprite path {:?} has no UTF-8 filename", path),
+                )
+            })?;
         Self::load_from_file(
             path,
             asset_name,
@@ -144,7 +155,7 @@ struct LoadRequest {
 
 struct LoadResponse {
     key: SpriteAssetKey,
-    result: Result<SpriteStrip, String>,
+    result: EngineResult<SpriteStrip>,
 }
 
 pub struct SpriteManager {
@@ -232,7 +243,7 @@ impl SpriteManager {
         loaded_names
     }
 
-    pub fn load_blocking(&mut self, clip: ClipId, prefer_flipped: bool) -> Result<(), String> {
+    pub fn load_blocking(&mut self, clip: ClipId, prefer_flipped: bool) -> EngineResult<()> {
         let spec = ClipCatalog::spec(clip);
         let flipped = prefer_flipped && spec.flipped_filename.is_some();
         let key = SpriteAssetKey { clip, flipped };

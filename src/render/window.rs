@@ -23,6 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{IUnknown, Interface, PCWSTR, w};
 
+use crate::core::error::{EngineError, EngineResult};
 use crate::core::state::{Facing, Stance};
 use crate::core::visual::VisualTransform;
 use crate::desktop::monitors::virtual_desktop_bounds;
@@ -210,13 +211,13 @@ impl Drop for OwnedHwnd {
 struct ComApartment;
 
 impl ComApartment {
-    fn initialize() -> Result<Self, String> {
+    fn initialize() -> EngineResult<Self> {
         // SAFETY: COM is initialized for the lifetime of the main-thread overlay and
         // balanced by `CoUninitialize` in `Drop`.
         unsafe {
             CoInitializeEx(None, COINIT_APARTMENTTHREADED)
                 .ok()
-                .map_err(|error| format!("CoInitializeEx: {error}"))?;
+                .map_err(|error| EngineError::window("CoInitializeEx", error.to_string()))?;
         }
         Ok(Self)
     }
@@ -312,12 +313,13 @@ unsafe extern "system" fn input_wndproc(
     }
 }
 
-fn create_overlay_hwnd() -> Result<OwnedHwnd, String> {
+fn create_overlay_hwnd() -> EngineResult<OwnedHwnd> {
     // SAFETY: The instance handle and static UTF-16 strings remain valid while
     // `RegisterClassExW` and `CreateWindowExW` consume them. The window procedure
     // remains valid for the process lifetime.
     unsafe {
-        let hinstance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {}", e))?;
+        let hinstance = GetModuleHandleW(None)
+            .map_err(|error| EngineError::window("GetModuleHandleW", error.to_string()))?;
 
         let class_name = w!("CapriEngineOverlayWindow");
 
@@ -357,7 +359,7 @@ fn create_overlay_hwnd() -> Result<OwnedHwnd, String> {
             Some(HINSTANCE(hinstance.0)),
             None,
         )
-        .map_err(|e| format!("CreateWindowExW: {}", e))?;
+        .map_err(|error| EngineError::window("CreateWindowExW", error.to_string()))?;
 
         let _ = SetWindowPos(
             hwnd,
@@ -373,11 +375,12 @@ fn create_overlay_hwnd() -> Result<OwnedHwnd, String> {
     }
 }
 
-fn create_input_hwnd() -> Result<OwnedHwnd, String> {
+fn create_input_hwnd() -> EngineResult<OwnedHwnd> {
     // SAFETY: The input class and window use process-lifetime resources. The input
     // window remains hidden until an opaque sprite pixel is under the cursor.
     unsafe {
-        let hinstance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {}", e))?;
+        let hinstance = GetModuleHandleW(None)
+            .map_err(|error| EngineError::window("GetModuleHandleW", error.to_string()))?;
         let class_name = w!("CapriEngineInputWindow");
         let window_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -407,7 +410,7 @@ fn create_input_hwnd() -> Result<OwnedHwnd, String> {
             Some(HINSTANCE(hinstance.0)),
             None,
         )
-        .map_err(|error| format!("CreateWindowExW input: {error}"))?;
+        .map_err(|error| EngineError::window("CreateWindowExW input", error.to_string()))?;
 
         SetWindowPos(
             hwnd,
@@ -418,7 +421,7 @@ fn create_input_hwnd() -> Result<OwnedHwnd, String> {
             16,
             SWP_NOACTIVATE,
         )
-        .map_err(|error| format!("SetWindowPos input: {error}"))?;
+        .map_err(|error| EngineError::window("SetWindowPos input", error.to_string()))?;
         Ok(OwnedHwnd::new(hwnd))
     }
 }
@@ -428,7 +431,7 @@ fn create_input_hwnd() -> Result<OwnedHwnd, String> {
     note = "Use `CompositionOverlay::create()`. This function will be removed in 0.4.0."
 )]
 #[allow(deprecated)]
-pub fn create_overlay_window(_state: WindowSharedState) -> Result<HWND, String> {
+pub fn create_overlay_window(_state: WindowSharedState) -> EngineResult<HWND> {
     create_overlay_hwnd().map(OwnedHwnd::into_raw)
 }
 
@@ -446,7 +449,7 @@ pub struct CompositionOverlay {
 }
 
 impl CompositionOverlay {
-    pub fn create() -> Result<Self, String> {
+    pub fn create() -> EngineResult<Self> {
         let com = ComApartment::initialize()?;
 
         // SAFETY: DPI awareness is process-wide and must be selected before the overlay
@@ -465,21 +468,22 @@ impl CompositionOverlay {
         // SAFETY: The DirectComposition device is created without an external rendering
         // device, and the target and visual are owned for the lifetime of this overlay.
         let (device, target, visual) = unsafe {
-            let device: IDCompositionDesktopDevice =
-                DCompositionCreateDevice2(None::<&IUnknown>)
-                    .map_err(|error| format!("DCompositionCreateDevice2: {error}"))?;
+            let device: IDCompositionDesktopDevice = DCompositionCreateDevice2(None::<&IUnknown>)
+                .map_err(|error| {
+                EngineError::window("DCompositionCreateDevice2", error.to_string())
+            })?;
             let target = device
                 .CreateTargetForHwnd(hwnd.raw(), true)
-                .map_err(|error| format!("CreateTargetForHwnd: {error}"))?;
+                .map_err(|error| EngineError::window("CreateTargetForHwnd", error.to_string()))?;
             let visual = device
                 .CreateVisual()
-                .map_err(|error| format!("CreateVisual: {error}"))?;
-            target
-                .SetRoot(&visual)
-                .map_err(|error| format!("IDCompositionTarget::SetRoot: {error}"))?;
-            device
-                .Commit()
-                .map_err(|error| format!("IDCompositionDevice::Commit: {error}"))?;
+                .map_err(|error| EngineError::window("CreateVisual", error.to_string()))?;
+            target.SetRoot(&visual).map_err(|error| {
+                EngineError::window("IDCompositionTarget::SetRoot", error.to_string())
+            })?;
+            device.Commit().map_err(|error| {
+                EngineError::window("IDCompositionDevice::Commit", error.to_string())
+            })?;
             (device, target, visual)
         };
 
@@ -519,27 +523,28 @@ impl CompositionOverlay {
         self.size
     }
 
-    pub fn commit(&self) -> Result<(), String> {
+    pub fn commit(&self) -> EngineResult<()> {
         // SAFETY: The DirectComposition device is owned by this overlay and remains
         // valid for the lifetime of all visuals attached to it.
         unsafe {
-            self._device
-                .Commit()
-                .map_err(|error| format!("IDCompositionDevice::Commit: {error}"))
+            self._device.Commit().map_err(|error| {
+                EngineError::window("IDCompositionDevice::Commit", error.to_string())
+            })
         }
     }
 
-    pub fn poll_cursor(&self) -> Result<(i32, i32), String> {
+    pub fn poll_cursor(&self) -> EngineResult<(i32, i32)> {
         let mut point = POINT::default();
         // SAFETY: `point` is a valid writable POINT for the duration of the call.
         unsafe {
-            GetCursorPos(&mut point).map_err(|error| format!("GetCursorPos: {error}"))?;
+            GetCursorPos(&mut point)
+                .map_err(|error| EngineError::window("GetCursorPos", error.to_string()))?;
         }
         self.input.set_cursor(point);
         Ok((point.x, point.y))
     }
 
-    pub fn sync_input_capture(&mut self, capture: bool) -> Result<(), String> {
+    pub fn sync_input_capture(&mut self, capture: bool) -> EngineResult<()> {
         if capture {
             if self.input.mouse_down() {
                 return Ok(());
@@ -557,7 +562,7 @@ impl CompositionOverlay {
                     16,
                     SWP_NOACTIVATE | SWP_SHOWWINDOW,
                 )
-                .map_err(|error| format!("SetWindowPos input: {error}"))?;
+                .map_err(|error| EngineError::window("SetWindowPos input", error.to_string()))?;
             }
             self.input_visible = true;
             return Ok(());
@@ -581,14 +586,14 @@ impl CompositionOverlay {
         since = "0.2.1",
         note = "Use `sync_input_capture()` to coordinate the dedicated input window. This method will be removed in 0.4.0."
     )]
-    pub fn set_click_through(&mut self, click_through: bool) -> Result<(), String> {
+    pub fn set_click_through(&mut self, click_through: bool) -> EngineResult<()> {
         self.sync_input_capture(!click_through)
     }
 
     pub fn create_surface(
         &self,
         instance: &wgpu::Instance,
-    ) -> Result<wgpu::Surface<'static>, String> {
+    ) -> EngineResult<wgpu::Surface<'static>> {
         // SAFETY: The DirectComposition visual is owned by this overlay and outlives
         // the returned surface; `wgpu` retains its own reference to the visual.
         unsafe {
@@ -596,7 +601,7 @@ impl CompositionOverlay {
                 self.visual.as_raw(),
             ))
         }
-        .map_err(|error| format!("create composition surface: {error}"))
+        .map_err(|error| EngineError::gpu("create composition surface", error.to_string()))
     }
 }
 
