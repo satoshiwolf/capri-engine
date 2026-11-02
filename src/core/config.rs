@@ -58,6 +58,7 @@ pub const GATEWAY_MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub const GATEWAY_MAX_FRAME_BYTES: usize = 64 * 1024;
 pub const GATEWAY_MAX_WRITE_BUFFER_BYTES: usize = GATEWAY_MAX_MESSAGE_BYTES * 2;
 pub const GATEWAY_ACCEPT_RETRY_DELAY_MS: u64 = 100;
+pub const GATEWAY_HANDSHAKE_TIMEOUT_MS: u64 = 5_000;
 
 /// Command-driven suspension position below the top edge of the virtual desktop.
 pub const CEILING_HANG_OFFSET_PX: f32 = 60.0;

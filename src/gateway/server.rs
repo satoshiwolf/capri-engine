@@ -10,8 +10,8 @@ use tokio_tungstenite::tungstenite::http::header::{AUTHORIZATION, ORIGIN};
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::core::config::{
-    GATEWAY_ACCEPT_RETRY_DELAY_MS, GATEWAY_MAX_CONNECTIONS, GATEWAY_MAX_FRAME_BYTES,
-    GATEWAY_MAX_MESSAGE_BYTES, GATEWAY_MAX_WRITE_BUFFER_BYTES,
+    GATEWAY_ACCEPT_RETRY_DELAY_MS, GATEWAY_HANDSHAKE_TIMEOUT_MS, GATEWAY_MAX_CONNECTIONS,
+    GATEWAY_MAX_FRAME_BYTES, GATEWAY_MAX_MESSAGE_BYTES, GATEWAY_MAX_WRITE_BUFFER_BYTES,
 };
 use crate::core::error::{EngineError, EngineResult};
 use crate::gateway::protocol::{IncomingCommand, OutgoingEvent};
@@ -105,6 +105,10 @@ pub struct WsGatewayServer {
 }
 
 impl WsGatewayServer {
+    #[deprecated(
+        since = "0.3.35",
+        note = "Use `with_bounded_channel()` to apply backpressure. This constructor will be removed in 0.4.0."
+    )]
     pub fn new(
         port: u16,
         cmd_sender: mpsc::UnboundedSender<IncomingCommand>,
@@ -195,15 +199,18 @@ impl WsGatewayServer {
                     ..Default::default()
                 };
                 #[allow(clippy::result_large_err)]
-                let handshake = tokio_tungstenite::accept_hdr_async_with_config(
-                    stream,
-                    move |request: &Request, response: Response| {
-                        authorize_handshake(&security, request, response)
-                    },
-                    Some(websocket_config),
+                let handshake = tokio::time::timeout(
+                    std::time::Duration::from_millis(GATEWAY_HANDSHAKE_TIMEOUT_MS),
+                    tokio_tungstenite::accept_hdr_async_with_config(
+                        stream,
+                        move |request: &Request, response: Response| {
+                            authorize_handshake(&security, request, response)
+                        },
+                        Some(websocket_config),
+                    ),
                 )
                 .await;
-                if let Ok(mut ws_stream) = handshake {
+                if let Ok(Ok(mut ws_stream)) = handshake {
                     println!("[GATEWAY] Nuevo cliente conectado desde {}", client_addr);
 
                     loop {
@@ -263,6 +270,12 @@ impl WsGatewayServer {
                     }
 
                     println!("[GATEWAY] Cliente desconectado: {}", client_addr);
+                } else if let Ok(Err(error)) = handshake {
+                    eprintln!("[GATEWAY ERROR] Handshake de {client_addr}: {error}");
+                } else {
+                    eprintln!(
+                        "[GATEWAY WARNING] Handshake de {client_addr} excedio el tiempo limite"
+                    );
                 }
             });
         }
