@@ -167,3 +167,64 @@ impl Default for VfxSystem {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sparks_fall_and_expire() {
+        let mut vfx = VfxSystem::new();
+        vfx.emit_sparks(Vec2::new(10.0, 20.0), 1, Vec2::X);
+        let initial_velocity_y = vfx.sparks[0].vel.y;
+
+        vfx.update(0.1);
+
+        assert!(vfx.sparks[0].vel.y > initial_velocity_y);
+
+        vfx.update(1.0);
+        assert!(vfx.sparks.is_empty());
+    }
+
+    #[test]
+    fn shockwaves_expand_and_expire() {
+        let mut vfx = VfxSystem::new();
+        vfx.emit_shockwave(Vec2::new(30.0, 40.0), 1.0);
+        let initial_radius = vfx.shockwaves[0].radius;
+
+        vfx.update(0.1);
+
+        assert!(vfx.shockwaves[0].radius > initial_radius);
+        assert!(vfx.shockwaves[0].intensity < 1.0);
+
+        vfx.update(10.0);
+        assert!(vfx.shockwaves.is_empty());
+    }
+
+    #[test]
+    fn cracks_respect_impact_threshold_and_expire() {
+        let mut vfx = VfxSystem::new();
+        vfx.emit_cracks(Vec2::ZERO, Vec2::Y, 0.1);
+        assert!(vfx.cracks.is_empty());
+
+        vfx.emit_cracks(Vec2::ZERO, Vec2::Y, 1.0);
+        assert!(!vfx.cracks.is_empty());
+
+        vfx.update(5.0);
+        assert!(vfx.cracks.is_empty());
+    }
+
+    #[test]
+    fn dizzy_stars_advance_phase_and_expire() {
+        let mut vfx = VfxSystem::new();
+        vfx.emit_dizzy(Vec2::new(10.0, 10.0));
+        let initial_phase = vfx.dizzy.as_ref().expect("dizzy stars").phase;
+
+        vfx.update(0.1);
+
+        assert!(vfx.dizzy.as_ref().expect("dizzy stars").phase > initial_phase);
+
+        vfx.update(3.0);
+        assert!(vfx.dizzy.is_none());
+    }
+}
