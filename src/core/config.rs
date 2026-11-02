@@ -76,6 +76,8 @@ pub const LIP_SYNC_HOLD_SECS: f32 = 0.16;
 pub const ANIME_FRAME_SECS: f32 = 1.0 / 24.0;
 pub const RELEASE_STREAK_SECS: f32 = 2.0 * ANIME_FRAME_SECS;
 pub const LEDGE_SCAN_INTERVAL_MS: u64 = 250;
+/// Horizontal space reserved at each side of a ledge for stable seating.
+pub const LEDGE_SUPPORT_MARGIN_RATIO: f32 = 0.20;
 pub const SKID_SPARK_INTERVAL_SECS: f32 = 0.04;
 pub const SKID_LEAN_PER_PX_SEC: f32 = 0.012;
 pub const SKID_MAX_LEAN_DEGREES: f32 = 16.0;

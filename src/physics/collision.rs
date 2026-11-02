@@ -1,4 +1,4 @@
-use crate::core::config::{SPRITE_HEIGHT, SPRITE_WIDTH};
+use crate::core::config::{LEDGE_SUPPORT_MARGIN_RATIO, SPRITE_HEIGHT, SPRITE_WIDTH};
 use glam::Vec2;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +13,14 @@ pub struct LedgeSurface {
 impl LedgeSurface {
     pub fn contains_x(&self, x: f32, margin: f32) -> bool {
         x >= self.left - margin && x <= self.right + margin
+    }
+
+    /// Returns the range in which the sprite center can rest without crossing either edge.
+    pub fn standing_limits(&self, sprite_width: f32) -> Option<(f32, f32)> {
+        let margin = sprite_width * LEDGE_SUPPORT_MARGIN_RATIO;
+        let min_x = self.left + margin;
+        let max_x = self.right - margin;
+        (min_x <= max_x).then_some((min_x, max_x))
     }
 }
 
@@ -168,5 +176,24 @@ mod tests {
 
         assert!(ledge.contains_x(200.0, 20.0));
         assert!(!ledge.contains_x(500.0, 20.0));
+    }
+
+    #[test]
+    fn standing_limits_reject_spans_narrower_than_the_support_margin() {
+        let narrow = LedgeSurface {
+            hwnd: 1,
+            left: 100.0,
+            right: 140.0,
+            y: 200.0,
+            window_title: None,
+        };
+        let exact = LedgeSurface {
+            left: 100.0,
+            right: 196.0,
+            ..narrow.clone()
+        };
+
+        assert_eq!(narrow.standing_limits(SPRITE_WIDTH), None);
+        assert_eq!(exact.standing_limits(SPRITE_WIDTH), Some((148.0, 148.0)));
     }
 }

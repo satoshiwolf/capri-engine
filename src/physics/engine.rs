@@ -258,10 +258,12 @@ impl PhysicsEngine {
                 self.begin_fall();
                 return events;
             };
-            self.center_pos.x = self.center_pos.x.clamp(
-                current.left + SPRITE_WIDTH * 0.2,
-                current.right - SPRITE_WIDTH * 0.2,
-            );
+            let Some((min_x, max_x)) = current.standing_limits(SPRITE_WIDTH) else {
+                self.seated_surface = None;
+                self.begin_fall();
+                return events;
+            };
+            self.center_pos.x = self.center_pos.x.clamp(min_x, max_x);
             self.center_pos.y = current.y;
             self.rotation = 0.0;
             if self.stance == Stance::Sit {
@@ -577,5 +579,25 @@ mod tests {
             physics.seated_surface.as_ref().map(|surface| surface.hwnd),
             Some(7)
         );
+    }
+
+    #[test]
+    fn narrow_support_forces_fall_without_panicking() {
+        let mut physics = PhysicsEngine::new(Vec2::new(120.0, 200.0));
+        physics.stance = Stance::Sit;
+        physics.seated_surface = Some(LedgeSurface {
+            hwnd: 7,
+            left: 100.0,
+            right: 140.0,
+            y: 200.0,
+            window_title: None,
+        });
+
+        let events =
+            physics.step_with_surfaces(1.0 / 60.0, 0.0, 0.0, 800.0, 600.0, &[]);
+
+        assert!(events.is_empty());
+        assert_eq!(physics.stance, Stance::Fly);
+        assert!(physics.flight.is_some());
     }
 }
