@@ -9,10 +9,9 @@ use tokio::sync::{broadcast, mpsc as tokio_mpsc};
 use capri_engine::core::config::{
     DEFAULT_RENDER_HZ, DEFAULT_WS_PORT, DIZZY_VFX_OFFSET_Y_PX, GATEWAY_COMMAND_CAPACITY,
     GATEWAY_EVENT_CAPACITY, IMPACT_HARDNESS_NORMALIZER_PX_SEC, IMPACT_SPARK_COUNT,
-    METRICS_SAMPLE_CAPACITY, MOUTH_GLITCH_SCALE, SKID_LANDING_SPARK_COUNT, SKID_LEAN_PER_PX_SEC,
-    SKID_MAX_LEAN_DEGREES, SKID_SPARK_INTERVAL_SECS,
+    METRICS_SAMPLE_CAPACITY, MOUTH_GLITCH_SCALE, SKID_LANDING_SPARK_COUNT,
+    SKID_SPARK_INTERVAL_SECS,
 };
-use capri_engine::core::error::EngineResult;
 use capri_engine::core::events::EngineEvent;
 use capri_engine::core::metrics::FrameMetrics;
 use capri_engine::core::state::{Facing, Stance};
@@ -26,7 +25,11 @@ use capri_engine::gateway::{
 use capri_engine::physics::collision::LedgeSurface;
 use capri_engine::physics::{PhysicsSnapshot, PhysicsWorker};
 use capri_engine::render::animation::{
-    AnimationAction, AnimationController, AnimationInput, AnimationSample, ClipCatalog, ClipId,
+    AnimationAction, AnimationController, AnimationInput, ClipCatalog, ClipId,
+};
+use capri_engine::render::coordinator::{
+    RenderedBody, current_motion, prepare_loaded_strip, prewarm_animation, render_transform,
+    select_body,
 };
 use capri_engine::render::hittest::{AlphaBitmask, create_default_mask};
 use capri_engine::render::pipeline::{Renderer, SpriteInstance};
@@ -35,15 +38,6 @@ use capri_engine::render::vfx::VfxSystem;
 use capri_engine::render::window::{
     CompositionOverlay, IS_RUNNING, pump_messages, should_capture_input, wait_for_messages,
 };
-
-#[derive(Clone, Copy)]
-struct RenderedBody {
-    clip: ClipId,
-    flipped: bool,
-    frame_index: usize,
-    pivot: Vec2,
-    display_scale: f32,
-}
 
 #[derive(Clone, Copy)]
 enum DragState {
@@ -89,7 +83,7 @@ impl DragState {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.48 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.49 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -162,13 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut reported_stance = physics.stance();
     let mut last_hit_mask_key = None;
     let mut hit_mask_cache: Option<Arc<AlphaBitmask>> = None;
-    let mut last_body = RenderedBody {
-        clip: ClipId::Idle,
-        flipped: false,
-        frame_index: 0,
-        pivot: ClipCatalog::spec(ClipId::Idle).pivot,
-        display_scale: 1.0,
-    };
+    let mut last_body = RenderedBody::initial();
 
     println!("[ENGINE] Bucle visual iniciado a {target_fps} Hz. Listo.");
 
@@ -203,32 +191,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mouse_down = overlay.input().mouse_down();
 
         let input_sample = animation.sample();
-        let (input_clip, input_flipped, input_frame, input_pivot, input_scale) =
-            select_body(&mut sprite_manager, input_sample, last_body);
+        let input_body = select_body(&mut sprite_manager, input_sample, last_body);
         prepare_loaded_strip(
             &mut renderer,
             &mut sprite_manager,
-            input_clip,
-            input_flipped,
+            input_body.clip(),
+            input_body.flipped(),
         )?;
 
-        let input_transform = render_transform(&physics, input_flipped);
+        let input_transform = render_transform(&physics, input_body.flipped());
         let hit_mask = sprite_manager
-            .get(input_clip, input_flipped)
-            .and_then(|strip| strip.frame_mask(input_frame));
-        let hit_mask_key = hit_mask.map(|_| (input_clip, input_flipped, input_frame));
+            .get(input_body.clip(), input_body.flipped())
+            .and_then(|strip| strip.frame_mask(input_body.frame_index()));
+        let hit_mask_key = hit_mask.map(|_| {
+            (
+                input_body.clip(),
+                input_body.flipped(),
+                input_body.frame_index(),
+            )
+        });
         if hit_mask_key != last_hit_mask_key {
             last_hit_mask_key = hit_mask_key;
             let mask = hit_mask.unwrap_or(&default_mask).clone();
             hit_mask_cache = Some(Arc::new(mask));
         }
         let input_transform = VisualTransform {
-            scale: input_transform.scale * input_scale,
+            scale: input_transform.scale * input_body.display_scale(),
             ..input_transform
         };
         overlay
             .input()
-            .set_hit_test(hit_mask_cache.clone(), input_transform, input_pivot);
+            .set_hit_test(hit_mask_cache.clone(), input_transform, input_body.pivot());
         let is_over_capri = overlay.input().hit_test(cursor_screen);
         let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance());
         overlay.try_sync_input_capture(capture_input)?;
@@ -328,20 +321,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let sample = animation.sample();
-        let (body_clip, body_flipped, body_frame, pivot, display_scale) =
-            select_body(&mut sprite_manager, sample, last_body);
+        let rendered_body = select_body(&mut sprite_manager, sample, last_body);
         prewarm_animation(&mut sprite_manager, &physics);
-        prepare_loaded_strip(&mut renderer, &mut sprite_manager, body_clip, body_flipped)?;
+        prepare_loaded_strip(
+            &mut renderer,
+            &mut sprite_manager,
+            rendered_body.clip(),
+            rendered_body.flipped(),
+        )?;
 
-        let mouth_viseme = sample
-            .mouth_viseme
-            .filter(|_| !matches!(body_clip, ClipId::PerchTalk | ClipId::LaydownTalk));
+        let mouth_viseme = sample.mouth_viseme.filter(|_| {
+            !matches!(
+                rendered_body.clip(),
+                ClipId::PerchTalk | ClipId::LaydownTalk
+            )
+        });
         let mouth_key = mouth_viseme.map(|_| sprite_manager.request(ClipId::Mouth, false));
         if mouth_viseme.is_some() {
             prepare_loaded_strip(&mut renderer, &mut sprite_manager, ClipId::Mouth, false)?;
         }
 
-        let body_task = sprite_manager.request(body_clip, body_flipped);
+        let body_task = sprite_manager.request(rendered_body.clip(), rendered_body.flipped());
         sprite_manager.request(ClipId::Idle, false);
         let keep = match mouth_key {
             Some(mouth) => [body_task, mouth],
@@ -350,16 +350,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let kept_names = sprite_manager.trim_to_budget(&keep);
         renderer.retain_sprites(&kept_names.into_iter().collect::<HashSet<_>>());
 
-        let transform = render_transform(&physics, body_flipped);
+        let transform = render_transform(&physics, rendered_body.flipped());
         let transform = VisualTransform {
-            scale: transform.scale * display_scale,
+            scale: transform.scale * rendered_body.display_scale(),
             ..transform
         };
         let body_strip = sprite_manager.get_strip(body_task.name());
         let mouth_strip = mouth_key.and_then(|key| sprite_manager.get_strip(key.name()));
         if let Some(strip) = body_strip {
-            let mut body = SpriteInstance::new(strip, body_frame, transform, pivot);
-            body.mirror_uv = physics.facing() == Facing::Left && !body_flipped;
+            let mut body = SpriteInstance::new(
+                strip,
+                rendered_body.frame_index(),
+                transform,
+                rendered_body.pivot(),
+            );
+            body.mirror_uv = physics.facing() == Facing::Left && !rendered_body.flipped();
             body.flash = sample.flash;
             body.glitch = sample.glitch;
             body.smear = sample.smear;
@@ -378,7 +383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         spec.pivot,
                     );
                     mouth.glitch = sample.glitch * MOUTH_GLITCH_SCALE;
-                    mouth.mirror_uv = physics.facing() == Facing::Left && !body_flipped;
+                    mouth.mirror_uv = physics.facing() == Facing::Left && !rendered_body.flipped();
                     mouth
                 })
             });
@@ -386,13 +391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             renderer.try_render_animation(body, mouth, &vfx)?;
         }
 
-        last_body = RenderedBody {
-            clip: body_clip,
-            flipped: body_flipped,
-            frame_index: body_frame,
-            pivot,
-            display_scale,
-        };
+        last_body = rendered_body;
 
         let frame_time = frame_start.elapsed();
         frame_metrics.record(frame_time.as_secs_f64());
@@ -424,107 +423,4 @@ fn log_frame_metrics(metrics: &FrameMetrics, resident_mask_bytes: usize) {
         jitter * 1_000.0,
         resident_mask_bytes.div_ceil(1024)
     );
-}
-
-fn prepare_loaded_strip(
-    renderer: &mut Renderer,
-    manager: &mut SpriteManager,
-    clip: ClipId,
-    flipped: bool,
-) -> EngineResult<()> {
-    if let Some(strip) = manager.get_mut(clip, flipped)
-        && !strip.rgba_frames.is_empty()
-    {
-        renderer.try_prepare_strip(strip)?;
-        strip.release_rgba_frames();
-    }
-    Ok(())
-}
-
-fn select_body(
-    manager: &mut SpriteManager,
-    sample: AnimationSample,
-    fallback: RenderedBody,
-) -> (ClipId, bool, usize, Vec2, f32) {
-    manager.request(sample.clip, sample.use_flipped_asset);
-    manager.request(ClipId::Idle, false);
-
-    let requested_available = manager.get(sample.clip, sample.use_flipped_asset).is_some();
-    if requested_available {
-        return (
-            sample.clip,
-            sample.use_flipped_asset,
-            sample.frame_index,
-            sample.pivot,
-            sample.display_scale,
-        );
-    }
-
-    if sample.use_flipped_asset && manager.get(sample.clip, false).is_some() {
-        let spec = ClipCatalog::spec(sample.clip);
-        return (
-            sample.clip,
-            false,
-            sample.frame_index.min(spec.frame_count.saturating_sub(1)),
-            spec.pivot,
-            spec.display_scale,
-        );
-    }
-
-    if manager.get(fallback.clip, fallback.flipped).is_some() {
-        return (
-            fallback.clip,
-            fallback.flipped,
-            fallback.frame_index,
-            fallback.pivot,
-            fallback.display_scale,
-        );
-    }
-
-    let spec = ClipCatalog::spec(ClipId::Idle);
-    (
-        ClipId::Idle,
-        false,
-        sample.frame_index % spec.frame_count,
-        spec.pivot,
-        spec.display_scale,
-    )
-}
-
-fn prewarm_animation(manager: &mut SpriteManager, physics: &PhysicsSnapshot) {
-    let flipped = physics.facing() == Facing::Left;
-    let next = match physics.stance() {
-        Stance::Skid if physics.has_landing_surface() => Some(ClipId::Perch),
-        Stance::Dazed => Some(ClipId::Laydown),
-        Stance::Sit | Stance::Corner => Some(ClipId::Laydown),
-        Stance::Held | Stance::Fly | Stance::Upside | Stance::Ride => Some(ClipId::Idle),
-        Stance::Stand | Stance::LayDown | Stance::Skid => None,
-    };
-    if let Some(clip) = next {
-        manager.request(clip, flipped);
-    }
-}
-
-fn render_transform(physics: &PhysicsSnapshot, actual_flipped_asset: bool) -> VisualTransform {
-    let mut transform = physics.visual_transform();
-    if actual_flipped_asset {
-        transform.facing = Facing::Right;
-    }
-    if physics.stance() == Stance::Skid
-        && let Some(skid) = physics.skid()
-    {
-        transform.rotation_degrees = (-skid.velocity_x * SKID_LEAN_PER_PX_SEC)
-            .clamp(-SKID_MAX_LEAN_DEGREES, SKID_MAX_LEAN_DEGREES);
-    }
-    transform
-}
-
-fn current_motion(physics: &PhysicsSnapshot, cursor_motion: Vec2) -> Vec2 {
-    match physics.stance() {
-        Stance::Held | Stance::Ride => cursor_motion,
-        Stance::Fly => physics
-            .flight()
-            .map_or(Vec2::ZERO, |flight| flight.velocity),
-        _ => Vec2::ZERO,
-    }
 }
