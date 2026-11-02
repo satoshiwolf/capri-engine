@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
@@ -107,7 +108,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.14 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.15 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -172,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut was_dazed = false;
     let mut last_skid_spark = Instant::now() - Duration::from_secs(1);
     let mut reported_stance = physics.stance();
+    let mut last_hit_mask_key = None;
     let mut last_body = RenderedBody {
         clip: ClipId::Idle,
         flipped: false,
@@ -214,18 +216,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
         let input_transform = render_transform(&physics, input_flipped);
-        let is_over_capri = sprite_manager
+        let hit_mask = sprite_manager
             .get(input_clip, input_flipped)
-            .and_then(|strip| strip.frame_mask(input_frame))
-            .unwrap_or(&default_mask)
-            .hit_test_transformed(
-                cursor_screen,
-                VisualTransform {
-                    scale: input_transform.scale * input_scale,
-                    ..input_transform
-                },
-                input_pivot,
-            );
+            .and_then(|strip| strip.frame_mask(input_frame));
+        let hit_mask_key = hit_mask.map(|_| (input_clip, input_flipped, input_frame));
+        if hit_mask_key != last_hit_mask_key {
+            last_hit_mask_key = hit_mask_key;
+            let mask = hit_mask.unwrap_or(&default_mask).clone();
+            overlay.input().set_hit_test_mask(Some(Arc::new(mask)));
+        }
+        let input_transform = VisualTransform {
+            scale: input_transform.scale * input_scale,
+            ..input_transform
+        };
+        overlay
+            .input()
+            .set_hit_test_transform(input_transform, input_pivot);
+        let is_over_capri = overlay.input().hit_test(cursor_screen);
         let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance());
         overlay.input().set_capture_input(capture_input);
         overlay

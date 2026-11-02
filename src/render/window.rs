@@ -1,4 +1,6 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use arc_swap::ArcSwapOption;
+use glam::Vec2;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::DirectComposition::{
@@ -21,8 +23,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{IUnknown, Interface, PCWSTR, w};
 
-use crate::core::state::Stance;
+use crate::core::state::{Facing, Stance};
+use crate::core::visual::VisualTransform;
 use crate::desktop::monitors::virtual_desktop_bounds;
+use crate::render::hittest::AlphaBitmask;
 
 pub static IS_RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -61,6 +65,15 @@ pub struct OverlayInput {
     cursor_y: Arc<AtomicI32>,
     mouse_down: Arc<AtomicBool>,
     capture_input: Arc<AtomicBool>,
+    hit_mask: Arc<ArcSwapOption<AlphaBitmask>>,
+    hit_center_x: Arc<AtomicU32>,
+    hit_center_y: Arc<AtomicU32>,
+    hit_rotation: Arc<AtomicU32>,
+    hit_scale_x: Arc<AtomicU32>,
+    hit_scale_y: Arc<AtomicU32>,
+    hit_pivot_x: Arc<AtomicU32>,
+    hit_pivot_y: Arc<AtomicU32>,
+    hit_facing: Arc<AtomicI32>,
 }
 
 impl OverlayInput {
@@ -70,6 +83,15 @@ impl OverlayInput {
             cursor_y: Arc::new(AtomicI32::new(0)),
             mouse_down: Arc::new(AtomicBool::new(false)),
             capture_input: Arc::new(AtomicBool::new(false)),
+            hit_mask: Arc::new(ArcSwapOption::empty()),
+            hit_center_x: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            hit_center_y: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            hit_rotation: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            hit_scale_x: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            hit_scale_y: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            hit_pivot_x: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            hit_pivot_y: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            hit_facing: Arc::new(AtomicI32::new(1)),
         }
     }
 
@@ -86,6 +108,55 @@ impl OverlayInput {
 
     pub fn set_capture_input(&self, capture: bool) {
         self.capture_input.store(capture, Ordering::Release);
+    }
+
+    pub fn set_hit_test_mask(&self, mask: Option<Arc<AlphaBitmask>>) {
+        self.hit_mask.store(mask);
+    }
+
+    pub fn set_hit_test_transform(&self, transform: VisualTransform, pivot: Vec2) {
+        self.hit_center_x
+            .store(transform.center.x.to_bits(), Ordering::Release);
+        self.hit_center_y
+            .store(transform.center.y.to_bits(), Ordering::Release);
+        self.hit_rotation
+            .store(transform.rotation_degrees.to_bits(), Ordering::Release);
+        self.hit_scale_x
+            .store(transform.scale.x.to_bits(), Ordering::Release);
+        self.hit_scale_y
+            .store(transform.scale.y.to_bits(), Ordering::Release);
+        self.hit_pivot_x.store(pivot.x.to_bits(), Ordering::Release);
+        self.hit_pivot_y.store(pivot.y.to_bits(), Ordering::Release);
+        self.hit_facing
+            .store(transform.facing.as_f32() as i32, Ordering::Release);
+    }
+
+    pub fn hit_test(&self, screen_point: Vec2) -> bool {
+        let Some(mask) = self.hit_mask.load_full() else {
+            return false;
+        };
+        let facing = if self.hit_facing.load(Ordering::Acquire) < 0 {
+            Facing::Left
+        } else {
+            Facing::Right
+        };
+        let transform = VisualTransform::new(
+            Vec2::new(
+                f32::from_bits(self.hit_center_x.load(Ordering::Acquire)),
+                f32::from_bits(self.hit_center_y.load(Ordering::Acquire)),
+            ),
+            f32::from_bits(self.hit_rotation.load(Ordering::Acquire)),
+            Vec2::new(
+                f32::from_bits(self.hit_scale_x.load(Ordering::Acquire)),
+                f32::from_bits(self.hit_scale_y.load(Ordering::Acquire)),
+            ),
+            facing,
+        );
+        let pivot = Vec2::new(
+            f32::from_bits(self.hit_pivot_x.load(Ordering::Acquire)),
+            f32::from_bits(self.hit_pivot_y.load(Ordering::Acquire)),
+        );
+        mask.hit_test_transformed(screen_point, transform, pivot)
     }
 
     fn set_cursor(&self, point: POINT) {
@@ -190,9 +261,12 @@ unsafe extern "system" fn input_wndproc(
 ) -> LRESULT {
     match msg {
         WM_NCHITTEST => {
+            let x = (lparam.0 as u16 as i16) as f32;
+            let y = ((lparam.0 >> 16) as u16 as i16) as f32;
+            let point = Vec2::new(x, y);
             if GLOBAL_INPUT
                 .get()
-                .is_some_and(|input| input.capture_input.load(Ordering::Acquire))
+                .is_some_and(|input| input.hit_test(point))
             {
                 LRESULT(HTCLIENT as isize)
             } else {
@@ -565,5 +639,21 @@ mod tests {
         assert!(should_capture_input(false, true, Stance::Stand));
         assert!(should_capture_input(false, false, Stance::Held));
         assert!(!should_capture_input(false, false, Stance::Fly));
+    }
+
+    #[test]
+    fn wm_hit_snapshot_reads_latest_mask_and_transform() {
+        let input = OverlayInput::new();
+        let mut alpha = vec![0; 20 * 20];
+        alpha[10 * 20 + 10] = 255;
+        let mask = AlphaBitmask::new(20, 20, alpha);
+        let transform =
+            VisualTransform::new(Vec2::new(100.0, 100.0), 0.0, Vec2::ONE, Facing::Right);
+
+        input.set_hit_test_mask(Some(Arc::new(mask)));
+        input.set_hit_test_transform(transform, Vec2::new(10.0, 10.0));
+
+        assert!(input.hit_test(Vec2::new(100.0, 100.0)));
+        assert!(!input.hit_test(Vec2::new(100.0, 80.0)));
     }
 }
