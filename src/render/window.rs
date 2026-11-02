@@ -65,7 +65,6 @@ pub struct OverlayInput {
     cursor_x: Arc<AtomicI32>,
     cursor_y: Arc<AtomicI32>,
     mouse_down: Arc<AtomicBool>,
-    capture_input: Arc<AtomicBool>,
     hit_test: Arc<ArcSwapOption<HitTestSnapshot>>,
 }
 
@@ -81,7 +80,6 @@ impl OverlayInput {
             cursor_x: Arc::new(AtomicI32::new(0)),
             cursor_y: Arc::new(AtomicI32::new(0)),
             mouse_down: Arc::new(AtomicBool::new(false)),
-            capture_input: Arc::new(AtomicBool::new(false)),
             hit_test: Arc::new(ArcSwapOption::empty()),
         }
     }
@@ -95,10 +93,6 @@ impl OverlayInput {
 
     pub fn mouse_down(&self) -> bool {
         self.mouse_down.load(Ordering::Acquire)
-    }
-
-    pub fn set_capture_input(&self, capture: bool) {
-        self.capture_input.store(capture, Ordering::Release);
     }
 
     #[deprecated(

@@ -153,7 +153,7 @@ impl Drop for LedgeScanner {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================================");
-    println!("          CAPRI ENGINE v0.3.39 - Cyberpunk Physics Host  ");
+    println!("          CAPRI ENGINE v0.3.40 - Cyberpunk Physics Host  ");
     println!("=========================================================");
 
     let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<IncomingCommand>(GATEWAY_COMMAND_CAPACITY);
@@ -291,7 +291,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .set_hit_test(hit_mask_cache.clone(), input_transform, input_pivot);
         let is_over_capri = overlay.input().hit_test(cursor_screen);
         let capture_input = should_capture_input(is_over_capri, mouse_down, physics.stance());
-        overlay.input().set_capture_input(capture_input);
         overlay.try_sync_input_capture(capture_input)?;
 
         if mouse_down && !was_mouse_down && is_over_capri && matches!(drag_state, DragState::Idle) {
